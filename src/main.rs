@@ -1,10 +1,19 @@
 #![warn(clippy::all, rust_2018_idioms)]
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
 
+use clap::Parser;
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Parser, Debug)]
+struct Args {
+    audio_file: Option<std::path::PathBuf>,
+}
+
 // When compiling natively:
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> eframe::Result {
     env_logger::init(); // Log to stderr (if you run with `RUST_LOG=debug`).
+    let args = Args::parse();
 
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -22,7 +31,12 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "beemusicsource",
         native_options,
-        Box::new(|cc| Ok(Box::new(beemusicsource::BeeMusicSource::new(cc)))),
+        // Box::new(|cc| Ok(Box::new(beemusicsource::BeeMusicSource::new(cc)))),
+        Box::new(|cc| {
+            Ok(Box::new(beemusicsource::BeeMusicSource::new_from_args(
+                args.audio_file,
+            )))
+        }),
     )
 }
 
