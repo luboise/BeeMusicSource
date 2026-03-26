@@ -6,12 +6,21 @@ pub struct BeeMusicSource {
     label: String,
 
     #[serde(skip)]
-    samples: Vec<f32>,
-    #[serde(skip)]
-    sample_rate: i32,
+    project: LiveProject,
 
     #[serde(skip)] // This how you opt-out of serialization of a field
     value: f32,
+}
+
+#[derive(Debug)]
+struct LiveStem {
+    stem: crate::bms::Stem,
+    audio: Option<crate::audio::AudioFile>,
+}
+
+#[derive(Debug, Default)]
+pub struct LiveProject {
+    stems: Vec<LiveStem>,
 }
 
 impl Default for BeeMusicSource {
@@ -19,12 +28,7 @@ impl Default for BeeMusicSource {
         Self {
             // Example stuff:
             label: "Hello World!".to_owned(),
-            samples: vec![
-                0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 0.9, 0.8, 0.7, 0.6, 0.5,
-                0.4, 0.3, 0.2, 0.1, 0.0, -0.1, -0.2, -0.3, -0.4, -0.5, -0.6, -0.7, -0.8, -0.9,
-                -1.0, -0.9, -0.8, -0.7, -0.6, -0.5, -0.4, -0.3, -0.2, -0.1,
-            ],
-            sample_rate: 48000,
+            project: LiveProject::default(),
             value: 2.7,
         }
     }
@@ -46,9 +50,17 @@ impl BeeMusicSource {
     }
 
     pub fn new_from_args(audio_path: Option<std::path::PathBuf>) -> Self {
-        if let Some((samples, _sample_rate)) = audio_path.and_then(|path| wavers::read(path).ok()) {
+        if let Some(audio_path) = audio_path {
             Self {
-                samples: samples.to_vec(),
+                project: LiveProject {
+                    stems: vec![LiveStem {
+                        stem: crate::bms::Stem {
+                            audio_path,
+                            slices: vec![],
+                        },
+                        audio: None,
+                    }],
+                },
                 ..Default::default()
             }
         } else {
@@ -67,6 +79,19 @@ impl eframe::App for BeeMusicSource {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Put your widgets into a `SidePanel`, `TopBottomPanel`, `CentralPanel`, `Window` or `Area`.
         // For inspiration and more examples, go to https://emilk.github.io/egui
+
+        // TODO: Make this periodic
+        self.project.stems.iter_mut().for_each(|st| {
+            if st.audio.is_none()
+                && let Ok((samples, sample_rate)) = wavers::read(&st.stem.audio_path)
+            {
+                st.audio = Some(crate::audio::AudioFile {
+                    samples: samples.to_vec(),
+                    num_channels: 2,
+                    sample_rate,
+                });
+            }
+        });
 
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
             // The top panel is often a good place for a menu bar:
@@ -103,30 +128,28 @@ impl eframe::App for BeeMusicSource {
 
             ui.separator();
 
+            let stroke = egui::Stroke::new(1.5, egui::Color32::LIGHT_BLUE);
+
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                for stem in &self.project.stems {
+                    let (rect, _response) = ui.allocate_exact_size(
+                        egui::Vec2::new(ui.available_width(), 200.0),
+                        egui::Sense::hover(),
+                    );
+
+                    if let Some(audio) = &stem.audio {
+                        let painter = ui.painter_at(rect);
+                        painter.rect_filled(rect, 0.0, egui::Color32::DARK_GRAY);
+
+                        audio.draw(&rect, &painter, stroke);
+                    }
+                }
+            });
+
             let rect = ui.available_rect_before_wrap();
 
             // Allocate it so its being used
             ui.allocate_rect(rect, egui::Sense::all());
-
-            let painter = ui.painter().with_clip_rect(rect);
-            let stroke = egui::Stroke::new(1.5, egui::Color32::LIGHT_BLUE);
-
-            painter.rect_filled(rect, 0.0, egui::Color32::DARK_GRAY);
-
-            let points = self
-                .samples
-                .iter()
-                .enumerate()
-                .map(|(i, sample)| {
-                    let ty = i as f32 / (self.samples.len() - 1) as f32;
-                    let tx = (sample + 1.0) / 2.0;
-                    egui::pos2(tx * rect.width(), ty * rect.height())
-                })
-                .collect::<Vec<_>>();
-
-            if points.len() > 1 {
-                painter.line(points, stroke);
-            }
 
             ui.add(egui::github_link_file!(
                 "https://github.com/emilk/eframe_template/blob/main/",
