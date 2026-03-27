@@ -10,6 +10,8 @@ pub struct BeeMusicSource {
 
     #[serde(skip)] // This how you opt-out of serialization of a field
     value: f32,
+
+    zoom_level: f32,
 }
 
 #[derive(Debug)]
@@ -30,6 +32,7 @@ impl Default for BeeMusicSource {
             label: "Hello World!".to_owned(),
             project: LiveProject::default(),
             value: 2.7,
+            zoom_level: 1.0,
         }
     }
 }
@@ -132,16 +135,22 @@ impl eframe::App for BeeMusicSource {
 
             egui::ScrollArea::vertical().show(ui, |ui| {
                 for stem in &self.project.stems {
-                    let (rect, _response) = ui.allocate_exact_size(
+                    let (rect, response) = ui.allocate_exact_size(
                         egui::Vec2::new(ui.available_width(), 200.0),
-                        egui::Sense::hover(),
+                        egui::Sense::click(),
                     );
+
+                    if response.clicked()
+                        && let Some(mouse_pos) = response.interact_pointer_pos()
+                    {
+                        dbg!(mouse_pos);
+                    }
 
                     if let Some(audio) = &stem.audio {
                         let painter = ui.painter_at(rect);
                         painter.rect_filled(rect, 0.0, egui::Color32::DARK_GRAY);
 
-                        audio.draw(&rect, &painter, stroke);
+                        audio.draw(6000, &rect, &painter, stroke);
                     }
                 }
             });
