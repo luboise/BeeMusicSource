@@ -1,18 +1,18 @@
 [package]
-name = "beemusicsource"
+name = "jonnah-slicer"
 version = "0.1.0"
 edition = "2024"
 # license = "MIT OR Apache-2.0"
 include = ["LICENSE-APACHE", "LICENSE-MIT", "**/*.rs", "Cargo.toml"]
-rust-version = "1.92"
 
 [package.metadata.docs.rs]
 all-features = true
 targets = ["x86_64-unknown-linux-gnu", "wasm32-unknown-unknown"]
 
 [dependencies]
-egui = "0.33.0"
-eframe = { version = "0.33.0", default-features = false, features = [
+egui = "0.34"
+egui_extras = { version = "0.34", features = ["image"] }
+eframe = { version = "0.34.0", default-features = false, features = [
   # "accesskit",     # Make egui compatible with screen readers. NOTE: adds a lot of dependencies.
   "default_fonts", # Embed the default egui fonts.
   "glow",          # Use the glow rendering backend. Alternative: "wgpu".
@@ -20,6 +20,7 @@ eframe = { version = "0.33.0", default-features = false, features = [
   "wayland",       # To support Linux (and CI)
   "x11",           # To support older Linux distributions (restores one of the default features)
 ] }
+image = "0.25"
 log = "0.4.27"
 
 clap = { version = "4.6.0", features = ["derive"] }

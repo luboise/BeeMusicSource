@@ -3,7 +3,7 @@ use crate::audio::calculate_num_samples_all_channels;
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(default)] // if we add new fields, give them default values when deserializing old state
-pub struct BeeMusicSource {
+pub struct JonnahSlicer<'a> {
     // Example stuff:
     label: String,
 
@@ -12,6 +12,9 @@ pub struct BeeMusicSource {
 
     #[serde(skip)] // This how you opt-out of serialization of a field
     value: f32,
+
+    #[serde(skip)]
+    jonnah_image: Option<egui::Image<'a>>,
 
     starting_measure: u64,
     measures_to_show: u64,
@@ -46,7 +49,7 @@ impl Default for LiveProject {
     }
 }
 
-impl Default for BeeMusicSource {
+impl<'a> Default for JonnahSlicer<'a> {
     fn default() -> Self {
         Self {
             // Example stuff:
@@ -57,11 +60,12 @@ impl Default for BeeMusicSource {
             measures_to_show: 8,
             visual_density: 6000,
             zoom_level: 1.0,
+            jonnah_image: None,
         }
     }
 }
 
-impl BeeMusicSource {
+impl<'a> JonnahSlicer<'a> {
     /// Called once before the first frame.
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         // This is also where you can customize the look and feel of egui using
@@ -77,27 +81,31 @@ impl BeeMusicSource {
     }
 
     pub fn new_from_args(audio_path: Option<std::path::PathBuf>) -> Self {
-        if let Some(audio_path) = audio_path {
-            Self {
-                project: LiveProject {
-                    stems: vec![LiveStem {
-                        stem: crate::bms::Stem {
-                            audio_path,
-                            slices: vec![],
-                        },
-                        audio: None,
-                    }],
-                    ..Default::default()
-                },
+        let Some(audio_path) = audio_path else {
+            return Default::default();
+        };
+
+        Self {
+            project: LiveProject {
+                stems: vec![LiveStem {
+                    stem: crate::bms::Stem {
+                        audio_path,
+                        slices: (0..8)
+                            .map(|v| crate::bms::Slice {
+                                time_point: crate::audio::TimePoint::new(v, 0.0),
+                            })
+                            .collect(),
+                    },
+                    audio: None,
+                }],
                 ..Default::default()
-            }
-        } else {
-            Default::default()
+            },
+            ..Default::default()
         }
     }
 }
 
-impl eframe::App for BeeMusicSource {
+impl<'a> eframe::App for JonnahSlicer<'a> {
     /// Called by the framework to save state before shutdown.
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         eframe::set_value(storage, eframe::APP_KEY, self);
@@ -105,6 +113,15 @@ impl eframe::App for BeeMusicSource {
 
     /// Called each time the UI needs repainting, which may be many times per second.
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if self.jonnah_image.is_none() {
+            egui_extras::install_image_loaders(ctx);
+            self.jonnah_image = Some(
+                egui::Image::new(egui::include_image!("../assets/jonnah.jpg"))
+                    .corner_radius(5.0)
+                    .tint(egui::Color32::WHITE),
+            );
+        }
+
         // Put your widgets into a `SidePanel`, `TopBottomPanel`, `CentralPanel`, `Window` or `Area`.
         // For inspiration and more examples, go to https://emilk.github.io/egui
 
@@ -118,7 +135,7 @@ impl eframe::App for BeeMusicSource {
             }
         });
 
-        let scroll_delta = ctx.input(|i| i.raw_scroll_delta);
+        let scroll_delta = ctx.input(|i| i.smooth_scroll_delta);
         let home_pressed = ctx.input(|i| i.key_pressed(egui::Key::Home));
 
         const SCROLL_SENSITIVITY: u64 = 1;
@@ -157,6 +174,10 @@ impl eframe::App for BeeMusicSource {
         });
 
         egui::CentralPanel::default().show(ctx, |ui| {
+            if let Some(jonnah) = &self.jonnah_image {
+                jonnah.paint_at(ui, ui.content_rect());
+            }
+
             // The central panel the region left after adding TopPanel's and SidePanel's
             ui.heading("eframe template");
 
@@ -196,11 +217,19 @@ impl eframe::App for BeeMusicSource {
                 for stem in &self.project.stems {
                     let num_channels = stem.audio.as_ref().map(|v| v.num_channels()).unwrap_or(1);
 
+                    let mut first_rect: Option<egui::Rect> = None;
+
+                    const RECT_HEIGHT: f32 = 200.0;
+
                     for channel_index in 0..num_channels {
                         let (rect, response) = ui.allocate_exact_size(
-                            egui::Vec2::new(ui.available_width(), 200.0),
+                            egui::Vec2::new(ui.available_width(), RECT_HEIGHT),
                             egui::Sense::click(),
                         );
+
+                        if first_rect.is_none() {
+                            first_rect.replace(rect);
+                        }
 
                         if response.clicked()
                             && let Some(mouse_pos) = response.interact_pointer_pos()
@@ -243,6 +272,17 @@ impl eframe::App for BeeMusicSource {
                             );
                         }
                     }
+
+                    let Some(first_rect) = first_rect else {
+                        continue;
+                    };
+
+                    // let painter = ui.painter_at(first_rect);
+                    // let stroke = egui::Stroke::new(20.0, egui::Color32::BLACK);
+
+                    // for slice in &stem.stem.slices {
+                    //     painter.line(first_rect, stroke);
+                    // }
                 }
             });
 
@@ -261,6 +301,10 @@ impl eframe::App for BeeMusicSource {
                 egui::warn_if_debug_build(ui);
             });
         });
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        return;
     }
 }
 

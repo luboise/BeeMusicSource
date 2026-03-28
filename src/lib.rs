@@ -4,4 +4,4 @@ mod app;
 mod audio;
 mod bms;
 
-pub use app::BeeMusicSource;
+pub use app::JonnahSlicer;
