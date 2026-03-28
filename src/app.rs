@@ -119,6 +119,7 @@ impl eframe::App for BeeMusicSource {
         });
 
         let scroll_delta = ctx.input(|i| i.raw_scroll_delta);
+        let home_pressed = ctx.input(|i| i.key_pressed(egui::Key::Home));
 
         const SCROLL_SENSITIVITY: u64 = 1;
         if scroll_delta.y != 0.0 {
@@ -130,6 +131,10 @@ impl eframe::App for BeeMusicSource {
             else {
                 self.starting_measure = self.starting_measure.saturating_add(SCROLL_SENSITIVITY);
             }
+        }
+
+        if home_pressed {
+            self.starting_measure = 0;
         }
 
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
@@ -226,8 +231,6 @@ impl eframe::App for BeeMusicSource {
 
                             let starting_sample = start_point
                                 .mono_sample_index(audio.sample_rate(), &self.project.bpm_changes);
-
-                            dbg!(starting_sample);
 
                             audio.draw_channel(
                                 channel_index,
