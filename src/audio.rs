@@ -23,6 +23,14 @@ impl TimePoint {
             submeasure,
         }
     }
+
+    /// Get the sample index of a time point within a given channel.
+    pub fn mono_sample_index(&self, channel_sample_rate: i32, bpm_changes: &[BPMChange]) -> usize {
+        let time = ((self.measure * 4) as f32 + self.submeasure)
+            * (60.0 / bpm_changes.first().expect("Fix this at some point").bpm);
+
+        (time * (channel_sample_rate as f32)) as usize
+    }
 }
 
 impl std::ops::Add for TimePoint {
@@ -131,7 +139,7 @@ impl AudioFile {
         &self,
         channel_index: u16,
         num_points: Option<usize>,
-        start_sample: usize,
+        starting_sample: usize,
         num_samples: usize,
         rect: &egui::Rect,
         painter: &egui::Painter,
@@ -139,31 +147,34 @@ impl AudioFile {
     ) {
         // Clamp to a normal amount
         let num_points = num_points
-            // TODO: Handle saturating subtraction
-            .map(|v| v.min(self.samples.len() - start_sample))
+            .map(|v| v.min(self.num_samples_per_channel()))
             .unwrap_or_else(|| self.samples.len());
 
         let samples = (0..num_points).map(|i| {
             let ratio = (i as f32) / ((num_points - 1) as f32);
 
-            let index = (ratio * (num_samples as f32)) as usize + start_sample;
+            let index = (ratio * (num_samples as f32)) as usize + starting_sample;
 
-            // TODO: Replace this with a get and clean this up
-            self.samples[index * usize::from(self.num_channels()) + usize::from(channel_index)]
+            // Adjust for channel sample
+            self.samples
+                .get(index * usize::from(self.num_channels()) + usize::from(channel_index))
         });
 
         let points = samples
             .into_iter()
             .take(num_points)
             .enumerate()
-            .map(|(i, sample)| {
+            .filter_map(|(i, sample)| {
+                let sample = sample?;
+
                 let tx = i as f32 / (num_points - 1) as f32;
+
                 // [-1, 1] -> [0, 1], then invert for egui Y downwards
-                let ty = 1.0 - f32::midpoint(sample, 1.0);
-                egui::pos2(
+                let ty = 1.0 - f32::midpoint(*sample, 1.0);
+                Some(egui::pos2(
                     rect.min.x + tx * rect.width(),
                     rect.min.y + ty * rect.height(),
-                )
+                ))
             })
             .collect::<Vec<_>>();
 

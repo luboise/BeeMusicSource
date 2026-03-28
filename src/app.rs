@@ -118,6 +118,20 @@ impl eframe::App for BeeMusicSource {
             }
         });
 
+        let scroll_delta = ctx.input(|i| i.raw_scroll_delta);
+
+        const SCROLL_SENSITIVITY: u64 = 1;
+        if scroll_delta.y != 0.0 {
+            // Scrolled up => move left
+            if scroll_delta.y > 0.0 {
+                self.starting_measure = self.starting_measure.saturating_sub(SCROLL_SENSITIVITY);
+            }
+            // Scrolled down => move right
+            else {
+                self.starting_measure = self.starting_measure.saturating_add(SCROLL_SENSITIVITY);
+            }
+        }
+
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
             // The top panel is often a good place for a menu bar:
 
@@ -163,20 +177,14 @@ impl eframe::App for BeeMusicSource {
                         egui::Sense::click(),
                     );
 
-                    let mut measure = 0u64;
-
-                    while (self.starting_measure..self.starting_measure + self.measures_to_show)
-                        .contains(&measure)
-                    {
-                        let tx = measure as f32 / self.measures_to_show as f32;
+                    for i in 0..self.measures_to_show {
+                        let tx = i as f32 / self.measures_to_show as f32;
                         let pos = egui::pos2(rect.min.x + tx * rect.width(), rect.min.y);
 
                         ui.put(
                             egui::Rect::from_pos(pos).expand(20.0),
-                            egui::Label::new(measure.to_string()),
+                            egui::Label::new((i + self.starting_measure).to_string()),
                         );
-
-                        measure += 1;
                     }
                 }
 
@@ -213,10 +221,18 @@ impl eframe::App for BeeMusicSource {
                                 &self.project.bpm_changes,
                             );
 
+                            let start_point =
+                                crate::audio::TimePoint::new(self.starting_measure, 0.0);
+
+                            let starting_sample = start_point
+                                .mono_sample_index(audio.sample_rate(), &self.project.bpm_changes);
+
+                            dbg!(starting_sample);
+
                             audio.draw_channel(
                                 channel_index,
                                 Some(self.visual_density),
-                                0,
+                                starting_sample,
                                 num_samples / usize::from(num_channels),
                                 &rect,
                                 &painter,
