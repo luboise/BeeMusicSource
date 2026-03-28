@@ -150,7 +150,8 @@ impl eframe::App for BeeMusicSource {
                         let painter = ui.painter_at(rect);
                         painter.rect_filled(rect, 0.0, egui::Color32::DARK_GRAY);
 
-                        audio.draw(6000, &rect, &painter, stroke);
+                        // audio.draw(Some(6000), &rect, &painter, stroke);
+                        audio.draw_snapshot(Some(6000), 0, 2000000, &rect, &painter, stroke);
                     }
                 }
             });

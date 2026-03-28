@@ -3,6 +3,7 @@
 
 # trunk output folder
 dist
+data/
 
 # Rust compile target directories:
 target
