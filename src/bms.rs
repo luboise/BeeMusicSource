@@ -1,7 +1,6 @@
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
 pub struct Slice {
-    pub measure: u64,
-    pub submeasure: f32,
+    time_point: crate::audio::TimePoint,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug)]

@@ -1,11 +1,101 @@
+#[derive(serde::Serialize, serde::Deserialize, PartialEq, Debug)]
+pub struct TimePoint {
+    pub measure: u64,
+    pub submeasure: f32,
+}
+
+impl Default for TimePoint {
+    fn default() -> Self {
+        Self {
+            measure: 0,
+            submeasure: 0.0,
+        }
+    }
+}
+
+impl TimePoint {
+    pub fn new(measure: u64, submeasure: f32) -> Self {
+        let measure = measure + submeasure.trunc() as u64;
+        let submeasure = submeasure.fract();
+
+        Self {
+            measure,
+            submeasure,
+        }
+    }
+}
+
+impl std::ops::Add for TimePoint {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self {
+        let sub = self.submeasure + rhs.submeasure;
+
+        let measure = self.measure + rhs.measure + sub.trunc() as u64;
+        let submeasure = sub.fract();
+
+        Self {
+            measure,
+            submeasure,
+        }
+    }
+}
+
+impl std::ops::Sub for TimePoint {
+    type Output = Self;
+
+    fn sub(self, rhs: Self) -> Self {
+        let mut measure = self.measure - rhs.measure;
+        let mut submeasure = self.submeasure - rhs.submeasure;
+
+        measure -= submeasure.abs().ceil() as u64;
+        submeasure += submeasure.abs().ceil();
+
+        Self {
+            measure,
+            submeasure,
+        }
+    }
+}
+
+#[cfg(test)]
+#[path = "./time_point_tests.rs"]
+mod time_point_tests;
+
+#[derive(Debug)]
+pub struct BPMChange {
+    pub time_point: TimePoint,
+    pub bpm: f32,
+}
+
 #[derive(Debug)]
 pub struct AudioFile {
-    pub samples: Vec<f32>,
-    pub num_channels: usize,
-    pub sample_rate: i32,
+    wav: wavers::Wav<f32>,
+    samples: wavers::Samples<f32>,
 }
 
 impl AudioFile {
+    pub fn new(mut wav: wavers::Wav<f32>) -> Result<Self, wavers::WaversError> {
+        let samples = wav.read()?;
+        Ok(Self { wav, samples })
+    }
+
+    pub fn sample_rate(&self) -> i32 {
+        self.wav.sample_rate()
+    }
+
+    pub fn num_channels(&self) -> u16 {
+        self.wav.n_channels()
+    }
+
+    pub fn num_samples(&self) -> usize {
+        self.samples.len()
+    }
+
+    pub fn num_samples_per_channel(&self) -> usize {
+        self.num_samples() / self.num_channels() as usize
+    }
+
     pub fn draw(
         &self,
         num_samples: Option<usize>,
@@ -14,8 +104,8 @@ impl AudioFile {
         stroke: egui::Stroke,
     ) {
         let num_drawn = num_samples
-            .map(|v| v.min(self.samples.len()))
-            .unwrap_or_else(|| self.samples.len());
+            .map(|v| v.min(self.wav.n_samples()))
+            .unwrap_or_else(|| self.wav.n_samples());
 
         let points = self
             .samples
@@ -37,36 +127,39 @@ impl AudioFile {
         }
     }
 
-    pub fn draw_snapshot(
+    pub fn draw_channel(
         &self,
-        num_samples: Option<usize>,
+        channel_index: u16,
+        num_points: Option<usize>,
         start_sample: usize,
-        end_sample: usize,
+        num_samples: usize,
         rect: &egui::Rect,
         painter: &egui::Painter,
         stroke: egui::Stroke,
     ) {
-        let num_drawn = num_samples
-            .map(|v| v.min(self.samples.len()))
+        // Clamp to a normal amount
+        let num_points = num_points
+            // TODO: Handle saturating subtraction
+            .map(|v| v.min(self.samples.len() - start_sample))
             .unwrap_or_else(|| self.samples.len());
 
-        let samples = (0..num_drawn)
-            .map(|i| {
-                let ratio = (i as f32) / ((num_drawn - 1) as f32);
+        let samples = (0..num_points).map(|i| {
+            let ratio = (i as f32) / ((num_points - 1) as f32);
 
-                let index = (((end_sample - start_sample) as f32) * ratio) as usize + start_sample;
+            let index = (ratio * (num_samples as f32)) as usize + start_sample;
 
-                self.samples[index]
-            })
-            .collect::<Vec<_>>();
+            // TODO: Replace this with a get and clean this up
+            self.samples[index * usize::from(self.num_channels()) + usize::from(channel_index)]
+        });
 
         let points = samples
             .into_iter()
-            .take(num_drawn)
+            .take(num_points)
             .enumerate()
             .map(|(i, sample)| {
-                let tx = i as f32 / (num_drawn - 1) as f32;
-                let ty = f32::midpoint(sample, 1.0);
+                let tx = i as f32 / (num_points - 1) as f32;
+                // [-1, 1] -> [0, 1], then invert for egui Y downwards
+                let ty = 1.0 - f32::midpoint(sample, 1.0);
                 egui::pos2(
                     rect.min.x + tx * rect.width(),
                     rect.min.y + ty * rect.height(),
@@ -78,4 +171,26 @@ impl AudioFile {
             painter.line(points, stroke);
         }
     }
+}
+
+pub fn calculate_num_samples_all_channels(
+    start: TimePoint,
+    end: TimePoint,
+    sample_rate: i32,
+    num_channels: u16,
+    bpm_changes: &[BPMChange],
+) -> usize {
+    let diff = end - start;
+
+    let num_beats = 4.0 * (diff.measure as f32 + diff.submeasure);
+
+    if bpm_changes.len() > 1 {
+        todo!("Calculate num samples unimplemented for multi-bpm projects.");
+    }
+
+    let beat_length = 60.0 / bpm_changes.first().expect("this fo testing fool").bpm;
+
+    let time_seconds = num_beats * beat_length;
+
+    ((sample_rate as usize * num_channels as usize) as f32 * time_seconds).ceil() as usize
 }

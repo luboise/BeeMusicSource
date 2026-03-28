@@ -1,3 +1,5 @@
+use crate::audio::calculate_num_samples_all_channels;
+
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(default)] // if we add new fields, give them default values when deserializing old state
@@ -11,6 +13,12 @@ pub struct BeeMusicSource {
     #[serde(skip)] // This how you opt-out of serialization of a field
     value: f32,
 
+    starting_measure: u64,
+    measures_to_show: u64,
+
+    /// The number of points to draw in channel
+    visual_density: usize,
+
     zoom_level: f32,
 }
 
@@ -20,9 +28,22 @@ struct LiveStem {
     audio: Option<crate::audio::AudioFile>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct LiveProject {
     stems: Vec<LiveStem>,
+    bpm_changes: Vec<crate::audio::BPMChange>,
+}
+
+impl Default for LiveProject {
+    fn default() -> Self {
+        Self {
+            stems: Default::default(),
+            bpm_changes: vec![crate::audio::BPMChange {
+                time_point: crate::audio::TimePoint::default(),
+                bpm: 160.0,
+            }],
+        }
+    }
 }
 
 impl Default for BeeMusicSource {
@@ -32,6 +53,9 @@ impl Default for BeeMusicSource {
             label: "Hello World!".to_owned(),
             project: LiveProject::default(),
             value: 2.7,
+            starting_measure: 0,
+            measures_to_show: 8,
+            visual_density: 6000,
             zoom_level: 1.0,
         }
     }
@@ -63,6 +87,7 @@ impl BeeMusicSource {
                         },
                         audio: None,
                     }],
+                    ..Default::default()
                 },
                 ..Default::default()
             }
@@ -86,13 +111,10 @@ impl eframe::App for BeeMusicSource {
         // TODO: Make this periodic
         self.project.stems.iter_mut().for_each(|st| {
             if st.audio.is_none()
-                && let Ok((samples, sample_rate)) = wavers::read(&st.stem.audio_path)
+                && let Ok(wav) = wavers::Wav::from_path(&st.stem.audio_path)
             {
-                st.audio = Some(crate::audio::AudioFile {
-                    samples: samples.to_vec(),
-                    num_channels: 2,
-                    sample_rate,
-                });
+                // TODO: FIX THIS
+                st.audio = Some(crate::audio::AudioFile::new(wav).expect("Bad wav"));
             }
         });
 
@@ -134,24 +156,73 @@ impl eframe::App for BeeMusicSource {
             let stroke = egui::Stroke::new(1.5, egui::Color32::LIGHT_BLUE);
 
             egui::ScrollArea::vertical().show(ui, |ui| {
-                for stem in &self.project.stems {
-                    let (rect, response) = ui.allocate_exact_size(
-                        egui::Vec2::new(ui.available_width(), 200.0),
+                {
+                    // Draw measures labels
+                    let (rect, _response) = ui.allocate_exact_size(
+                        egui::Vec2::new(ui.available_width(), 20.0),
                         egui::Sense::click(),
                     );
 
-                    if response.clicked()
-                        && let Some(mouse_pos) = response.interact_pointer_pos()
+                    let mut measure = 0u64;
+
+                    while (self.starting_measure..self.starting_measure + self.measures_to_show)
+                        .contains(&measure)
                     {
-                        dbg!(mouse_pos);
+                        let tx = measure as f32 / self.measures_to_show as f32;
+                        let pos = egui::pos2(rect.min.x + tx * rect.width(), rect.min.y);
+
+                        ui.put(
+                            egui::Rect::from_pos(pos).expand(20.0),
+                            egui::Label::new(measure.to_string()),
+                        );
+
+                        measure += 1;
                     }
+                }
 
-                    if let Some(audio) = &stem.audio {
-                        let painter = ui.painter_at(rect);
-                        painter.rect_filled(rect, 0.0, egui::Color32::DARK_GRAY);
+                for stem in &self.project.stems {
+                    let num_channels = stem.audio.as_ref().map(|v| v.num_channels()).unwrap_or(1);
 
-                        // audio.draw(Some(6000), &rect, &painter, stroke);
-                        audio.draw_snapshot(Some(6000), 0, 2000000, &rect, &painter, stroke);
+                    for channel_index in 0..num_channels {
+                        let (rect, response) = ui.allocate_exact_size(
+                            egui::Vec2::new(ui.available_width(), 200.0),
+                            egui::Sense::click(),
+                        );
+
+                        if response.clicked()
+                            && let Some(mouse_pos) = response.interact_pointer_pos()
+                        {
+                            dbg!(mouse_pos);
+                        }
+
+                        if let Some(audio) = &stem.audio {
+                            let painter = ui.painter_at(rect);
+                            painter.rect_filled(rect, 0.0, egui::Color32::DARK_GRAY);
+
+                            let num_samples = calculate_num_samples_all_channels(
+                                crate::audio::TimePoint {
+                                    measure: self.starting_measure,
+                                    submeasure: 0.0,
+                                },
+                                crate::audio::TimePoint {
+                                    measure: self.starting_measure + self.measures_to_show,
+                                    submeasure: 0.0,
+                                },
+                                audio.sample_rate(),
+                                audio.num_channels(),
+                                &self.project.bpm_changes,
+                            );
+
+                            audio.draw_channel(
+                                channel_index,
+                                Some(self.visual_density),
+                                0,
+                                num_samples / usize::from(num_channels),
+                                &rect,
+                                &painter,
+                                stroke,
+                            );
+                        }
                     }
                 }
             });
