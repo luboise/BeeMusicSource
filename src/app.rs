@@ -17,7 +17,6 @@ pub struct JonnahSlicer<'a> {
     jonnah_image: Option<egui::Image<'a>>,
 
     display_start: crate::audio::TimePoint,
-    display_length: i64,
 
     /// The number of points to draw in channel
     visual_density: usize,
@@ -62,7 +61,6 @@ impl Default for JonnahSlicer<'_> {
             zoom_level: 1.0,
             jonnah_image: None,
             display_start: crate::audio::TimePoint::default(),
-            display_length: 8,
             slice_snapping: crate::audio::Snapping::default(),
         }
     }
@@ -193,18 +191,17 @@ impl eframe::App for JonnahSlicer<'_> {
                 ui.text_edit_singleline(&mut self.label);
             });
 
-            ui.add(egui::Slider::new(&mut self.value, 0.0..=10.0).text("value"));
-            if ui.button("Increment").clicked() {
-                self.value += 1.0;
-            }
+            ui.add(egui::Slider::new(&mut self.zoom_level, 0.0..=8.0).text("Zoom"));
 
             ui.separator();
+
+            let display_length = (8.0 * self.zoom_level) as i64;
 
             let stroke = egui::Stroke::new(1.5, egui::Color32::LIGHT_BLUE);
 
             egui::ScrollArea::vertical().show(ui, |ui| {
                 let end_time_point =
-                    self.display_start + crate::audio::TimePoint::new(self.display_length, 0.0);
+                    self.display_start + crate::audio::TimePoint::new(display_length, 0.0);
 
                 {
                     // Draw measures labels
@@ -214,7 +211,7 @@ impl eframe::App for JonnahSlicer<'_> {
                     );
 
                     let start = f64::from(self.display_start);
-                    let end = (self.display_start.measure + self.display_length) as f64;
+                    let end = (self.display_start.measure + display_length) as f64;
 
                     let mut i = self.display_start.ceil() as f64;
                     while i < end {
@@ -283,7 +280,7 @@ impl eframe::App for JonnahSlicer<'_> {
                             let num_samples = calculate_num_samples_all_channels(
                                 self.display_start,
                                 self.display_start
-                                    + crate::audio::TimePoint::new(self.display_length, 0.0),
+                                    + crate::audio::TimePoint::new(display_length, 0.0),
                                 audio.sample_rate(),
                                 audio.num_channels(),
                                 &self.project.bpm_changes,
