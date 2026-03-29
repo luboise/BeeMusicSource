@@ -323,7 +323,9 @@ impl eframe::App for JonnahSlicer<'_> {
                             ((mouse_pos.unwrap_or_default().x - x1) / (x2 - x1)).clamp(0.0, 1.0)
                         };
 
-                        if let Some(mouse_pos) = &mouse_pos {
+                        if let Some(mouse_pos) = &mouse_pos
+                            && rect.contains(*mouse_pos)
+                        {
                             // if response.clicked()
                             if lmb_down {
                                 stem.stem.slices.push(crate::bms::Slice {

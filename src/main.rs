@@ -31,7 +31,7 @@ fn main() -> eframe::Result {
         ..Default::default()
     };
     eframe::run_native(
-        "beemusicsource",
+        "jonnah-slicer",
         native_options,
         Box::new(|cc| Ok(Box::new(jonnah_slicer::JonnahSlicer::new(cc)))),
     )
