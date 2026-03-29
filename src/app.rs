@@ -287,8 +287,8 @@ impl eframe::App for JonnahSlicer<'_> {
                                         .quantised(self.slice_snapping),
                                 });
 
-                                stem.stem.slices.sort_by_key(|v| v.time_point);
                                 stem.stem.slices.dedup_by_key(|v| v.time_point);
+                                stem.stem.slices.sort_by_key(|v| v.time_point);
 
                             // } else if response.secondary_clicked()
                             } else if rmb_down {
@@ -310,46 +310,41 @@ impl eframe::App for JonnahSlicer<'_> {
                                 let cursor_time_point =
                                     self.display_start.ratio(&end_time_point, mouse_x_ratio);
 
+                                stem.stem.slices.sort_by_key(|v| v.time_point);
+
                                 // If there is a slice before our cursor
-                                if let Some(first_slice_index) = stem
+                                if let Some((first_slice_index, first_slice)) = stem
                                     .stem
                                     .slices
                                     .iter()
-                                    .position(|slice| slice.time_point < cursor_time_point)
-                                {
-                                    let before_slice = &stem.stem.slices[first_slice_index];
-                                    if let Some(second_slice) =
+                                    .enumerate()
+                                    .rfind(|(_, slice)| slice.time_point < cursor_time_point)
+                                    && let Some(second_slice) =
                                         stem.stem.slices.get(first_slice_index + 1)
-                                    {
-                                        let start = before_slice.time_point;
-                                        let end = second_slice.time_point;
+                                {
+                                    let start = first_slice.time_point;
+                                    let end = second_slice.time_point;
 
-                                        let start_sample_index = start.mono_sample_index(
-                                            audio.sample_rate(),
-                                            &self.project.bpm_changes,
-                                        );
-                                        let end_sample_index = end.mono_sample_index(
-                                            audio.sample_rate(),
-                                            &self.project.bpm_changes,
-                                        );
+                                    let start_sample_index = start.mono_sample_index(
+                                        audio.sample_rate(),
+                                        &self.project.bpm_changes,
+                                    );
+                                    let end_sample_index = end.mono_sample_index(
+                                        audio.sample_rate(),
+                                        &self.project.bpm_changes,
+                                    );
 
-                                        dbg!(
-                                            stem.stem.slices.len(),
-                                            start_sample_index,
-                                            end_sample_index
-                                        );
+                                    dbg!(
+                                        stem.stem.slices.len(),
+                                        start_sample_index,
+                                        end_sample_index
+                                    );
 
-                                        audio_player.add_audio(
-                                            &stem
-                                                .audio
-                                                .as_ref()
-                                                .expect("NO AUDIO IN STEM?")
-                                                .samples()
-                                                [start_sample_index * audio.num_channels() as usize
-                                                    ..end_sample_index
-                                                        * audio.num_channels() as usize],
-                                        );
-                                    }
+                                    audio_player.add_audio(
+                                        &stem.audio.as_ref().expect("NO AUDIO IN STEM?").samples()
+                                            [start_sample_index * audio.num_channels() as usize
+                                                ..end_sample_index * audio.num_channels() as usize],
+                                    );
                                 }
                             }
 

@@ -26,10 +26,20 @@ impl Default for Snapping {
     }
 }
 
-#[derive(serde::Serialize, serde::Deserialize, PartialOrd, PartialEq, Debug, Clone, Copy)]
+#[derive(serde::Serialize, serde::Deserialize, PartialEq, Debug, Clone, Copy)]
 pub struct TimePoint {
     pub measure: i64,
     pub submeasure: f64,
+}
+
+impl PartialOrd for TimePoint {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        match self.measure.partial_cmp(&other.measure) {
+            Some(core::cmp::Ordering::Equal) => {}
+            ord => return ord,
+        }
+        self.submeasure.partial_cmp(&other.submeasure)
+    }
 }
 
 impl Eq for TimePoint {}
@@ -107,8 +117,8 @@ impl TimePoint {
 
     /// Get the sample index of a time point within a given channel.
     pub fn mono_sample_index(&self, channel_sample_rate: i32, bpm_changes: &[BPMChange]) -> usize {
-        let time = ((self.measure * 4) as f64 + self.submeasure)
-            * (60.0 / bpm_changes.first().expect("Fix this at some point").bpm);
+        let time =
+            f64::from(*self) * (60.0 / bpm_changes.first().expect("Fix this at some point").bpm);
 
         (time * (channel_sample_rate as f64)) as usize
     }
