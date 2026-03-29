@@ -4,17 +4,9 @@ use crate::audio::calculate_num_samples_all_channels;
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(default)] // if we add new fields, give them default values when deserializing old state
 pub struct JonnahSlicer<'a> {
-    // Example stuff:
-    label: String,
-
+    project_path: Option<std::path::PathBuf>,
     #[serde(skip)]
     project: LiveProject,
-
-    #[serde(skip)] // This how you opt-out of serialization of a field
-    value: f32,
-
-    #[serde(skip)]
-    jonnah_image: Option<egui::Image<'a>>,
 
     display_start: crate::audio::TimePoint,
 
@@ -25,6 +17,10 @@ pub struct JonnahSlicer<'a> {
 
     zoom_level: f32,
 
+    #[serde(skip)]
+    jonnah_image: Option<egui::Image<'a>>,
+    #[serde(skip)]
+    drag_and_drop: egui::DragAndDrop,
     #[serde(skip)]
     audio_player: Option<crate::audio_player::AudioPlayer>,
 }
@@ -39,6 +35,14 @@ struct LiveStem {
 pub struct LiveProject {
     stems: Vec<LiveStem>,
     bpm_changes: Vec<crate::audio::BPMChange>,
+}
+
+impl LiveProject {
+    pub fn as_project(&self) -> crate::bms::Project {
+        crate::bms::Project {
+            stems: self.stems.iter().map(|stem| stem.stem.clone()).collect(),
+        }
+    }
 }
 
 impl Default for LiveProject {
@@ -57,15 +61,15 @@ impl Default for JonnahSlicer<'_> {
     fn default() -> Self {
         Self {
             // Example stuff:
-            label: "Hello World!".to_owned(),
             project: LiveProject::default(),
-            value: 2.7,
             visual_density: 6000,
             zoom_level: 1.0,
             jonnah_image: None,
             display_start: crate::audio::TimePoint::default(),
             slice_snapping: crate::audio::Snapping::default(),
             audio_player: crate::audio_player::AudioPlayer::new().ok(),
+            project_path: None,
+            drag_and_drop: egui::DragAndDrop::default(),
         }
     }
 }
@@ -123,7 +127,7 @@ impl eframe::App for JonnahSlicer<'_> {
     }
 
     /// Called each time the UI needs repainting, which may be many times per second.
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         if self.jonnah_image.is_none() {
             egui_extras::install_image_loaders(ctx);
             self.jonnah_image = Some(
@@ -131,6 +135,31 @@ impl eframe::App for JonnahSlicer<'_> {
                     .corner_radius(5.0)
                     .tint(egui::Color32::WHITE),
             );
+        }
+
+        let (dropped, hovered) =
+            ctx.input(|i| (i.raw.dropped_files.clone(), i.raw.hovered_files.clone()));
+
+        if !hovered.is_empty() {
+            egui::Panel::left("File Hover Preview").show(ctx, |ui| {
+                if !hovered.is_empty() {
+                    for path in hovered.into_iter().filter_map(|file| file.path) {
+                        ui.label(path.display().to_string());
+                    }
+                }
+            });
+        }
+
+        for dropped_file in dropped {
+            if let Some(path) = dropped_file.path {
+                self.project.stems.push(LiveStem {
+                    stem: crate::bms::Stem {
+                        audio_path: path.clone(),
+                        slices: vec![],
+                    },
+                    audio: None,
+                });
+            }
         }
 
         // Put your widgets into a `SidePanel`, `TopBottomPanel`, `CentralPanel`, `Window` or `Area`.
@@ -166,6 +195,19 @@ impl eframe::App for JonnahSlicer<'_> {
                 let is_web = cfg!(target_arch = "wasm32");
                 if !is_web {
                     ui.menu_button("File", |ui| {
+                        if ui.button("Save").clicked() {
+                            serde_json::to_writer_pretty(
+                                std::fs::OpenOptions::new()
+                                    .create(true)
+                                    .write(true)
+                                    .truncate(true)
+                                    .open("./project.jonnah")
+                                    .expect("Failed to open jonnah???"),
+                                &self.project.as_project(),
+                            )
+                            .expect("Failed to serialize jonnah");
+                        }
+
                         if ui.button("Quit").clicked() {
                             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                         }
@@ -198,12 +240,7 @@ impl eframe::App for JonnahSlicer<'_> {
             }
 
             // The central panel the region left after adding TopPanel's and SidePanel's
-            ui.heading("eframe template");
-
-            ui.horizontal(|ui| {
-                ui.label("Write something: ");
-                ui.text_edit_singleline(&mut self.label);
-            });
+            ui.heading(format!("JonnahSlicer v{}", env!("CARGO_PKG_VERSION")));
 
             ui.add(egui::Slider::new(&mut self.zoom_level, 0.0..=8.0).text("Zoom"));
 
@@ -241,6 +278,14 @@ impl eframe::App for JonnahSlicer<'_> {
                     }
                 }
 
+                let (mouse_pos, lmb_down, rmb_down) = ctx.input(|i| {
+                    (
+                        i.pointer.latest_pos(),
+                        i.pointer.button_down(egui::PointerButton::Primary),
+                        i.pointer.button_down(egui::PointerButton::Secondary),
+                    )
+                });
+
                 for stem in &mut self.project.stems {
                     let num_channels = stem.audio.as_ref().map(|v| v.num_channels()).unwrap_or(1);
 
@@ -268,15 +313,6 @@ impl eframe::App for JonnahSlicer<'_> {
                         if first_rect.is_none() {
                             first_rect.replace(rect);
                         }
-
-                        let (mouse_pos, lmb_down, mmb_down, rmb_down) = ctx.input(|i| {
-                            (
-                                i.pointer.latest_pos(),
-                                i.pointer.button_down(egui::PointerButton::Primary),
-                                i.pointer.button_down(egui::PointerButton::Middle),
-                                i.pointer.button_down(egui::PointerButton::Secondary),
-                            )
-                        });
 
                         let mouse_x_ratio = {
                             let first_rect =

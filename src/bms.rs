@@ -4,13 +4,13 @@ pub struct Slice {
     // Room here later to add de-duplication of keysounds and custom keysound IDs
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct Stem {
     pub audio_path: std::path::PathBuf,
     pub slices: Vec<Slice>,
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct Project {
     pub stems: Vec<Stem>,
 }

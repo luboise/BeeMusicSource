@@ -25,18 +25,15 @@ fn main() -> eframe::Result {
                     &include_bytes!("../assets/favicon-512x512.png")[..],
                 )
                 .expect("Failed to load icon"),
-            ),
+            )
+            .with_drag_and_drop(true),
+
         ..Default::default()
     };
     eframe::run_native(
         "beemusicsource",
         native_options,
-        // Box::new(|cc| Ok(Box::new(beemusicsource::BeeMusicSource::new(cc)))),
-        Box::new(|_cc| {
-            Ok(Box::new(jonnah_slicer::JonnahSlicer::new_from_args(
-                args.audio_file,
-            )))
-        }),
+        Box::new(|cc| Ok(Box::new(jonnah_slicer::JonnahSlicer::new(cc)))),
     )
 }
 
