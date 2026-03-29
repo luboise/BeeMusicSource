@@ -1,5 +1,13 @@
 use crate::audio::calculate_num_samples_all_channels;
 
+#[derive(Default, Debug)]
+enum ProjectStatus {
+    #[default]
+    None,
+    Loaded,
+    Failed(Box<dyn std::error::Error>),
+}
+
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(default)] // if we add new fields, give them default values when deserializing old state
@@ -18,6 +26,9 @@ pub struct JonnahSlicer<'a> {
     zoom_level: f32,
 
     #[serde(skip)]
+    project_status: ProjectStatus,
+
+    #[serde(skip)]
     jonnah_image: Option<egui::Image<'a>>,
     #[serde(skip)]
     drag_and_drop: egui::DragAndDrop,
@@ -31,16 +42,34 @@ struct LiveStem {
     audio: Option<crate::audio::AudioFile>,
 }
 
+impl From<crate::bms::Stem> for LiveStem {
+    fn from(stem: crate::bms::Stem) -> Self {
+        Self { stem, audio: None }
+    }
+}
+
 #[derive(Debug)]
 pub struct LiveProject {
     stems: Vec<LiveStem>,
     bpm_changes: Vec<crate::audio::BPMChange>,
 }
 
+impl TryFrom<crate::bms::Project> for LiveProject {
+    type Error = Box<dyn std::error::Error>;
+
+    fn try_from(project: crate::bms::Project) -> Result<Self, Self::Error> {
+        Ok(Self {
+            stems: project.stems.into_iter().map(|v| v.into()).collect(),
+            bpm_changes: project.bpm_changes,
+        })
+    }
+}
+
 impl LiveProject {
     pub fn as_project(&self) -> crate::bms::Project {
         crate::bms::Project {
             stems: self.stems.iter().map(|stem| stem.stem.clone()).collect(),
+            bpm_changes: self.bpm_changes.clone(),
         }
     }
 }
@@ -70,6 +99,7 @@ impl Default for JonnahSlicer<'_> {
             audio_player: crate::audio_player::AudioPlayer::new().ok(),
             project_path: None,
             drag_and_drop: egui::DragAndDrop::default(),
+            project_status: Default::default(),
         }
     }
 }
@@ -83,40 +113,32 @@ impl JonnahSlicer<'_> {
         // Load previous app state (if any).
         // Note that you must enable the `persistence` feature for this to work.
         if let Some(storage) = cc.storage {
-            eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default()
+            let mut x: JonnahSlicer<'_> =
+                eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();
+
+            if x.project_path.is_none() {
+                x.project_path = Some(std::path::PathBuf::from("./projects/new_project/"));
+            }
+
+            x
         } else {
             Default::default()
         }
     }
 
-    pub fn new_from_args(audio_path: Option<std::path::PathBuf>) -> Self {
-        let Some(audio_path) = audio_path else {
-            return Default::default();
-        };
-
-        Self {
-            project: LiveProject {
-                stems: vec![
-                    LiveStem {
-                        stem: crate::bms::Stem {
-                            audio_path: audio_path.clone(),
-                            slices: vec![],
-                        },
-                        audio: None,
-                    },
-                    LiveStem {
-                        stem: crate::bms::Stem {
-                            audio_path,
-                            slices: vec![],
-                        },
-                        audio: None,
-                    },
-                ],
-
-                ..Default::default()
-            },
-            ..Default::default()
+    // TODO: Document errors that this function can return
+    pub fn save_to_disk(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        if let Err(e) = crate::bms::save_project(
+            &self.project.as_project(),
+            self.project_path
+                .clone()
+                .map(crate::bms::normalise_project_path)
+                .unwrap_or_else(|| std::path::PathBuf::from("./project.jonnah")),
+        ) {
+            eprintln!("error saving to disk: {e}");
         }
+
+        Ok(())
     }
 }
 
@@ -127,7 +149,30 @@ impl eframe::App for JonnahSlicer<'_> {
     }
 
     /// Called each time the UI needs repainting, which may be many times per second.
-    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if self.project_path.is_some() {
+            match &self.project_status {
+                ProjectStatus::None => {
+                    self.project = crate::bms::load_project(self.project_path.as_ref().unwrap())
+                        .and_then(|project| project.try_into())
+                        .unwrap_or_default();
+
+                    self.project_status = ProjectStatus::Loaded;
+                }
+                ProjectStatus::Failed(_error) => (),
+                ProjectStatus::Loaded => (),
+            }
+        }
+
+        if ctx.input_mut(|ui| {
+            ui.consume_shortcut(&egui::KeyboardShortcut::new(
+                egui::Modifiers::CTRL,
+                egui::Key::S,
+            ))
+        }) {
+            self.save_to_disk();
+        }
+
         if self.jonnah_image.is_none() {
             egui_extras::install_image_loaders(ctx);
             self.jonnah_image = Some(
@@ -152,9 +197,16 @@ impl eframe::App for JonnahSlicer<'_> {
 
         for dropped_file in dropped {
             if let Some(path) = dropped_file.path {
+                let parent_dir = std::env::current_dir();
+
+                let audio_path = parent_dir
+                    .ok()
+                    .and_then(|parent| pathdiff::diff_paths(&path, parent))
+                    .unwrap_or_else(|| path.canonicalize().unwrap_or(path));
+
                 self.project.stems.push(LiveStem {
                     stem: crate::bms::Stem {
-                        audio_path: path.clone(),
+                        audio_path,
                         slices: vec![],
                     },
                     audio: None,
@@ -196,16 +248,7 @@ impl eframe::App for JonnahSlicer<'_> {
                 if !is_web {
                     ui.menu_button("File", |ui| {
                         if ui.button("Save").clicked() {
-                            serde_json::to_writer_pretty(
-                                std::fs::OpenOptions::new()
-                                    .create(true)
-                                    .write(true)
-                                    .truncate(true)
-                                    .open("./project.jonnah")
-                                    .expect("Failed to open jonnah???"),
-                                &self.project.as_project(),
-                            )
-                            .expect("Failed to serialize jonnah");
+                            self.save_to_disk();
                         }
 
                         if ui.button("Quit").clicked() {

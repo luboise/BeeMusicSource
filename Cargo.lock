@@ -1690,6 +1690,7 @@ dependencies = [
  "env_logger",
  "image",
  "log",
+ "pathdiff",
  "serde",
  "serde_json",
  "wasm-bindgen-futures",
@@ -2457,6 +2458,12 @@ name = "pastey"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "35fb2e5f958ec131621fdd531e9fc186ed768cbe395337403ae56c17a74c68ec"
+
+[[package]]
+name = "pathdiff"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df94ce210e5bc13cb6651479fa48d14f601d9858cfe0467f43ae157023b938d3"
 
 [[package]]
 name = "peniko"

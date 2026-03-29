@@ -221,7 +221,7 @@ impl std::ops::SubAssign for TimePoint {
 #[path = "./time_point_tests.rs"]
 mod time_point_tests;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct BPMChange {
     pub time_point: TimePoint,
     pub bpm: f64,
