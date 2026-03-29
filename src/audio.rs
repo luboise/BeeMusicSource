@@ -209,12 +209,12 @@ pub struct BPMChange {
 
 #[derive(Debug)]
 pub struct AudioFile {
-    wav: wavers::Wav<f64>,
-    samples: wavers::Samples<f64>,
+    wav: wavers::Wav<f32>,
+    samples: wavers::Samples<f32>,
 }
 
 impl AudioFile {
-    pub fn new(mut wav: wavers::Wav<f64>) -> Result<Self, wavers::WaversError> {
+    pub fn new(mut wav: wavers::Wav<f32>) -> Result<Self, wavers::WaversError> {
         let samples = wav.read()?;
         Ok(Self { wav, samples })
     }
@@ -233,6 +233,10 @@ impl AudioFile {
 
     pub fn num_samples_per_channel(&self) -> usize {
         self.num_samples() / self.num_channels() as usize
+    }
+
+    pub fn samples(&self) -> &[f32] {
+        &self.samples
     }
 
     pub fn draw_channel(
@@ -270,10 +274,10 @@ impl AudioFile {
                 let tx = i as f64 / (num_points - 1) as f64;
 
                 // [-1, 1] -> [0, 1], then invert for egui Y downwards
-                let ty = 1.0 - f64::midpoint(*sample, 1.0);
+                let ty = 1.0 - f32::midpoint(*sample, 1.0);
                 Some(egui::pos2(
                     rect.min.x + tx as f32 * rect.width(),
-                    rect.min.y + ty as f32 * rect.height(),
+                    rect.min.y + ty * rect.height(),
                 ))
             })
             .collect::<Vec<_>>();

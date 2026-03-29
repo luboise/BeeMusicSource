@@ -24,6 +24,9 @@ pub struct JonnahSlicer<'a> {
     slice_snapping: crate::audio::Snapping,
 
     zoom_level: f32,
+
+    #[serde(skip)]
+    audio_player: Option<crate::audio_player::AudioPlayer>,
 }
 
 #[derive(Debug)]
@@ -62,6 +65,7 @@ impl Default for JonnahSlicer<'_> {
             jonnah_image: None,
             display_start: crate::audio::TimePoint::default(),
             slice_snapping: crate::audio::Snapping::default(),
+            audio_player: crate::audio_player::AudioPlayer::new().ok(),
         }
     }
 }
@@ -255,48 +259,69 @@ impl eframe::App for JonnahSlicer<'_> {
                             first_rect.replace(rect);
                         }
 
-                        let (mouse_pos, lmb_down, rmb_down) = ctx.input(|i| {
+                        let (mouse_pos, lmb_down, mmb_down, rmb_down) = ctx.input(|i| {
                             (
                                 i.pointer.latest_pos(),
                                 i.pointer.button_down(egui::PointerButton::Primary),
+                                i.pointer.button_down(egui::PointerButton::Middle),
                                 i.pointer.button_down(egui::PointerButton::Secondary),
                             )
                         });
 
-                        // if response.clicked()
-                        if lmb_down && let Some(mouse_pos) = &mouse_pos {
+                        let mouse_x_ratio = {
                             let first_rect =
                                 first_rect.as_ref().expect("This has been checked already");
                             let x1 = first_rect.min.x;
                             let x2 = first_rect.max.x;
 
-                            let tx = ((mouse_pos.x - x1) / (x2 - x1)).clamp(0.0, 1.0);
+                            ((mouse_pos.unwrap_or_default().x - x1) / (x2 - x1)).clamp(0.0, 1.0)
+                        };
 
-                            stem.stem.slices.push(crate::bms::Slice {
-                                time_point: self
-                                    .display_start
-                                    .ratio(&end_time_point, tx)
-                                    .quantised(self.slice_snapping),
-                            });
-                        // } else if response.secondary_clicked()
-                        } else if rmb_down && let Some(mouse_pos) = &mouse_pos {
-                            let first_rect =
-                                first_rect.as_ref().expect("This has been checked already");
-                            let x1 = first_rect.min.x;
-                            let x2 = first_rect.max.x;
+                        if let Some(mouse_pos) = &mouse_pos {
+                            // if response.clicked()
+                            if lmb_down {
+                                stem.stem.slices.push(crate::bms::Slice {
+                                    time_point: self
+                                        .display_start
+                                        .ratio(&end_time_point, mouse_x_ratio)
+                                        .quantised(self.slice_snapping),
+                                });
+                            // } else if response.secondary_clicked()
+                            } else if rmb_down {
+                                let ratiod =
+                                    self.display_start.ratio(&end_time_point, mouse_x_ratio);
 
-                            let tx = ((mouse_pos.x - x1) / (x2 - x1)).clamp(0.0, 1.0);
+                                const DELETE_DISTANCE: f64 = 0.15;
 
-                            let ratiod = self.display_start.ratio(&end_time_point, tx);
-
-                            const DELETE_DISTANCE: f64 = 0.15;
-
-                            stem.stem.slices.retain(|slice| {
-                                f64::from(slice.time_point - ratiod).abs() > DELETE_DISTANCE
-                            });
+                                stem.stem.slices.retain(|slice| {
+                                    f64::from(slice.time_point - ratiod).abs() > DELETE_DISTANCE
+                                });
+                            }
                         }
 
                         if let Some(audio) = &stem.audio {
+                            if response.middle_clicked()
+                                && let Some(audio_player) = &mut self.audio_player
+                            {
+                                let start = crate::audio::TimePoint::new(3, 0.0);
+                                let end = start + crate::audio::TimePoint::new(4, 0.0);
+
+                                let start_sample_index = start.mono_sample_index(
+                                    audio.sample_rate(),
+                                    &self.project.bpm_changes,
+                                );
+                                let end_sample_index = end.mono_sample_index(
+                                    audio.sample_rate(),
+                                    &self.project.bpm_changes,
+                                );
+
+                                audio_player.add_audio(
+                                    &stem.audio.as_ref().expect("NO AUDIO IN STEM?").samples()
+                                        [start_sample_index * audio.num_channels() as usize
+                                            ..end_sample_index * audio.num_channels() as usize],
+                                );
+                            }
+
                             let painter = ui.painter_at(rect);
                             painter.rect_filled(rect, 0.0, egui::Color32::DARK_GRAY);
 
