@@ -255,9 +255,16 @@ impl eframe::App for JonnahSlicer<'_> {
                             first_rect.replace(rect);
                         }
 
-                        if response.clicked()
-                            && let Some(mouse_pos) = response.interact_pointer_pos()
-                        {
+                        let (mouse_pos, lmb_down, rmb_down) = ctx.input(|i| {
+                            (
+                                i.pointer.latest_pos(),
+                                i.pointer.button_down(egui::PointerButton::Primary),
+                                i.pointer.button_down(egui::PointerButton::Secondary),
+                            )
+                        });
+
+                        // if response.clicked()
+                        if lmb_down && let Some(mouse_pos) = &mouse_pos {
                             let first_rect =
                                 first_rect.as_ref().expect("This has been checked already");
                             let x1 = first_rect.min.x;
@@ -270,6 +277,22 @@ impl eframe::App for JonnahSlicer<'_> {
                                     .display_start
                                     .ratio(&end_time_point, tx)
                                     .quantised(self.slice_snapping),
+                            });
+                        // } else if response.secondary_clicked()
+                        } else if rmb_down && let Some(mouse_pos) = &mouse_pos {
+                            let first_rect =
+                                first_rect.as_ref().expect("This has been checked already");
+                            let x1 = first_rect.min.x;
+                            let x2 = first_rect.max.x;
+
+                            let tx = ((mouse_pos.x - x1) / (x2 - x1)).clamp(0.0, 1.0);
+
+                            let ratiod = self.display_start.ratio(&end_time_point, tx);
+
+                            const DELETE_DISTANCE: f64 = 0.15;
+
+                            stem.stem.slices.retain(|slice| {
+                                f64::from(slice.time_point - ratiod).abs() > DELETE_DISTANCE
                             });
                         }
 
