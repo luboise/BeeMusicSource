@@ -11,7 +11,7 @@ impl AudioPlayer {
     pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
         let host = cpal::default_host();
 
-        const BUFFER_SIZE_PER_CHANNEL: u32 = 4096 * 4;
+        const BUFFER_SIZE_PER_CHANNEL: u32 = 1024;
 
         let device = host
             .default_output_device()

@@ -92,13 +92,23 @@ impl JonnahSlicer<'_> {
 
         Self {
             project: LiveProject {
-                stems: vec![LiveStem {
-                    stem: crate::bms::Stem {
-                        audio_path,
-                        slices: vec![],
+                stems: vec![
+                    LiveStem {
+                        stem: crate::bms::Stem {
+                            audio_path: audio_path.clone(),
+                            slices: vec![],
+                        },
+                        audio: None,
                     },
-                    audio: None,
-                }],
+                    LiveStem {
+                        stem: crate::bms::Stem {
+                            audio_path,
+                            slices: vec![],
+                        },
+                        audio: None,
+                    },
+                ],
+
                 ..Default::default()
             },
             ..Default::default()
@@ -332,12 +342,6 @@ impl eframe::App for JonnahSlicer<'_> {
                                     let end_sample_index = end.mono_sample_index(
                                         audio.sample_rate(),
                                         &self.project.bpm_changes,
-                                    );
-
-                                    dbg!(
-                                        stem.stem.slices.len(),
-                                        start_sample_index,
-                                        end_sample_index
                                     );
 
                                     audio_player.add_audio(
