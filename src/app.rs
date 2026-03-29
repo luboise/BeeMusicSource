@@ -291,7 +291,8 @@ impl eframe::App for JonnahSlicer<'_> {
 
             let display_length = (8.0 * self.zoom_level) as i64;
 
-            let stroke = egui::Stroke::new(1.5, egui::Color32::LIGHT_BLUE);
+            let waveform_stroke =
+                egui::Stroke::new(1.5, egui::Color32::from_gray(190).linear_multiply(0.7));
 
             egui::ScrollArea::vertical().show(ui, |ui| {
                 let end_time_point =
@@ -369,7 +370,6 @@ impl eframe::App for JonnahSlicer<'_> {
                         if let Some(mouse_pos) = &mouse_pos
                             && rect.contains(*mouse_pos)
                         {
-                            // if response.clicked()
                             if lmb_down {
                                 stem.stem.slices.push(crate::bms::Slice {
                                     time_point: self
@@ -380,8 +380,6 @@ impl eframe::App for JonnahSlicer<'_> {
 
                                 stem.stem.slices.dedup_by_key(|v| v.time_point);
                                 stem.stem.slices.sort_by_key(|v| v.time_point);
-
-                            // } else if response.secondary_clicked()
                             } else if rmb_down {
                                 let ratiod =
                                     self.display_start.ratio(&end_time_point, mouse_x_ratio);
@@ -434,7 +432,7 @@ impl eframe::App for JonnahSlicer<'_> {
                             }
 
                             let painter = ui.painter_at(rect);
-                            painter.rect_filled(rect, 0.0, egui::Color32::DARK_GRAY);
+                            painter.rect_filled(rect, 0.0, egui::Color32::from_gray(35));
 
                             let num_samples = calculate_num_samples_all_channels(
                                 self.display_start,
@@ -456,8 +454,37 @@ impl eframe::App for JonnahSlicer<'_> {
                                 num_samples / usize::from(num_channels),
                                 &rect,
                                 &painter,
-                                stroke,
+                                waveform_stroke,
                             );
+
+                            let slice_stroke = egui::Stroke::new(3.0, egui::Color32::WHITE);
+
+                            let measure_stroke = egui::Stroke::new(
+                                2.0,
+                                egui::Color32::DARK_BLUE.linear_multiply(0.7),
+                            );
+
+                            for i in self.display_start.measure..end_time_point.measure {
+                                let ratio = self.display_start.get_ratio(
+                                    &end_time_point,
+                                    &crate::audio::TimePoint::new(i, 0.0),
+                                );
+
+                                let tx = rect.min.x + (ratio as f32) * (rect.max.x - rect.min.x);
+
+                                let points = [
+                                    egui::Pos2 {
+                                        x: tx,
+                                        y: rect.min.y,
+                                    },
+                                    egui::Pos2 {
+                                        x: tx,
+                                        y: rect.max.y,
+                                    },
+                                ];
+
+                                painter.line_segment(points, measure_stroke);
+                            }
 
                             for slice in &slices {
                                 let ratio = self
@@ -477,10 +504,7 @@ impl eframe::App for JonnahSlicer<'_> {
                                     },
                                 ];
 
-                                painter.line_segment(
-                                    points,
-                                    egui::Stroke::new(5.0, egui::Color32::BLACK),
-                                );
+                                painter.line_segment(points, slice_stroke);
                             }
                         }
                     }
