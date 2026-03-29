@@ -1,6 +1,6 @@
-#[derive(serde::Serialize, serde::Deserialize, PartialEq, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, PartialEq, Debug, Clone, Copy)]
 pub struct TimePoint {
-    pub measure: u64,
+    pub measure: i64,
     pub submeasure: f32,
 }
 
@@ -13,15 +13,25 @@ impl Default for TimePoint {
     }
 }
 
+impl From<TimePoint> for f32 {
+    fn from(value: TimePoint) -> Self {
+        value.measure as Self + value.submeasure
+    }
+}
+
 impl TimePoint {
-    pub fn new(measure: u64, submeasure: f32) -> Self {
-        let measure = measure + submeasure.trunc() as u64;
+    pub fn new(measure: i64, submeasure: f32) -> Self {
+        let measure = measure + submeasure.trunc() as i64;
         let submeasure = submeasure.fract();
 
         Self {
             measure,
             submeasure,
         }
+    }
+
+    pub fn ceil(&self) -> i64 {
+        self.measure + self.submeasure.ceil() as i64
     }
 
     /// Get the sample index of a time point within a given channel.
@@ -31,6 +41,22 @@ impl TimePoint {
 
         (time * (channel_sample_rate as f32)) as usize
     }
+
+    fn normalise(&mut self) {
+        while self.submeasure < 0.0 {
+            self.measure -= 1;
+            self.submeasure += 1.0;
+        }
+
+        while self.submeasure > 1.0 {
+            self.measure += 1;
+            self.submeasure -= 1.0;
+        }
+
+        if self.measure < 0 {
+            *self = Self::default();
+        }
+    }
 }
 
 impl std::ops::Add for TimePoint {
@@ -39,13 +65,16 @@ impl std::ops::Add for TimePoint {
     fn add(self, rhs: Self) -> Self {
         let sub = self.submeasure + rhs.submeasure;
 
-        let measure = self.measure + rhs.measure + sub.trunc() as u64;
+        let measure = self.measure + rhs.measure + sub.trunc() as i64;
         let submeasure = sub.fract();
 
-        Self {
+        let mut tp = Self {
             measure,
             submeasure,
-        }
+        };
+
+        tp.normalise();
+        tp
     }
 }
 
@@ -56,13 +85,28 @@ impl std::ops::Sub for TimePoint {
         let mut measure = self.measure - rhs.measure;
         let mut submeasure = self.submeasure - rhs.submeasure;
 
-        measure -= submeasure.abs().ceil() as u64;
+        measure -= submeasure.abs().ceil() as i64;
         submeasure += submeasure.abs().ceil();
 
-        Self {
+        let mut tp = Self {
             measure,
             submeasure,
-        }
+        };
+
+        tp.normalise();
+        tp
+    }
+}
+
+impl std::ops::AddAssign for TimePoint {
+    fn add_assign(&mut self, rhs: Self) {
+        *self = *self + rhs;
+    }
+}
+
+impl std::ops::SubAssign for TimePoint {
+    fn sub_assign(&mut self, rhs: Self) {
+        *self = *self - rhs;
     }
 }
 

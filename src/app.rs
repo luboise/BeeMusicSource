@@ -16,8 +16,8 @@ pub struct JonnahSlicer<'a> {
     #[serde(skip)]
     jonnah_image: Option<egui::Image<'a>>,
 
-    starting_measure: u64,
-    measures_to_show: u64,
+    display_start: crate::audio::TimePoint,
+    display_length: i64,
 
     /// The number of points to draw in channel
     visual_density: usize,
@@ -49,23 +49,23 @@ impl Default for LiveProject {
     }
 }
 
-impl<'a> Default for JonnahSlicer<'a> {
+impl Default for JonnahSlicer<'_> {
     fn default() -> Self {
         Self {
             // Example stuff:
             label: "Hello World!".to_owned(),
             project: LiveProject::default(),
             value: 2.7,
-            starting_measure: 0,
-            measures_to_show: 8,
             visual_density: 6000,
             zoom_level: 1.0,
             jonnah_image: None,
+            display_start: crate::audio::TimePoint::default(),
+            display_length: 8,
         }
     }
 }
 
-impl<'a> JonnahSlicer<'a> {
+impl JonnahSlicer<'_> {
     /// Called once before the first frame.
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         // This is also where you can customize the look and feel of egui using
@@ -105,7 +105,7 @@ impl<'a> JonnahSlicer<'a> {
     }
 }
 
-impl<'a> eframe::App for JonnahSlicer<'a> {
+impl eframe::App for JonnahSlicer<'_> {
     /// Called by the framework to save state before shutdown.
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         eframe::set_value(storage, eframe::APP_KEY, self);
@@ -138,20 +138,14 @@ impl<'a> eframe::App for JonnahSlicer<'a> {
         let scroll_delta = ctx.input(|i| i.smooth_scroll_delta);
         let home_pressed = ctx.input(|i| i.key_pressed(egui::Key::Home));
 
-        const SCROLL_SENSITIVITY: u64 = 1;
+        const SCROLL_SENSITIVITY: f32 = 0.3;
         if scroll_delta.y != 0.0 {
-            // Scrolled up => move left
-            if scroll_delta.y > 0.0 {
-                self.starting_measure = self.starting_measure.saturating_sub(SCROLL_SENSITIVITY);
-            }
-            // Scrolled down => move right
-            else {
-                self.starting_measure = self.starting_measure.saturating_add(SCROLL_SENSITIVITY);
-            }
+            self.display_start +=
+                crate::audio::TimePoint::new(0, scroll_delta.y * SCROLL_SENSITIVITY);
         }
 
         if home_pressed {
-            self.starting_measure = 0;
+            self.display_start = Default::default();
         }
 
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
@@ -203,14 +197,20 @@ impl<'a> eframe::App for JonnahSlicer<'a> {
                         egui::Sense::click(),
                     );
 
-                    for i in 0..self.measures_to_show {
-                        let tx = i as f32 / self.measures_to_show as f32;
+                    let start = f32::from(self.display_start);
+                    let end = (self.display_start.measure + self.display_length) as f32;
+
+                    let mut i = self.display_start.ceil() as f32;
+                    while i < end {
+                        let tx = (i - start) / (end - start);
                         let pos = egui::pos2(rect.min.x + tx * rect.width(), rect.min.y);
 
                         ui.put(
                             egui::Rect::from_pos(pos).expand(20.0),
-                            egui::Label::new((i + self.starting_measure).to_string()),
+                            egui::Label::new(i.to_string()),
                         );
+
+                        i += 1.0;
                     }
                 }
 
@@ -242,23 +242,16 @@ impl<'a> eframe::App for JonnahSlicer<'a> {
                             painter.rect_filled(rect, 0.0, egui::Color32::DARK_GRAY);
 
                             let num_samples = calculate_num_samples_all_channels(
-                                crate::audio::TimePoint {
-                                    measure: self.starting_measure,
-                                    submeasure: 0.0,
-                                },
-                                crate::audio::TimePoint {
-                                    measure: self.starting_measure + self.measures_to_show,
-                                    submeasure: 0.0,
-                                },
+                                self.display_start,
+                                self.display_start
+                                    + crate::audio::TimePoint::new(self.display_length, 0.0),
                                 audio.sample_rate(),
                                 audio.num_channels(),
                                 &self.project.bpm_changes,
                             );
 
-                            let start_point =
-                                crate::audio::TimePoint::new(self.starting_measure, 0.0);
-
-                            let starting_sample = start_point
+                            let starting_sample = self
+                                .display_start
                                 .mono_sample_index(audio.sample_rate(), &self.project.bpm_changes);
 
                             audio.draw_channel(
