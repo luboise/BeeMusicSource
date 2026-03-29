@@ -286,6 +286,10 @@ impl eframe::App for JonnahSlicer<'_> {
                                         .ratio(&end_time_point, mouse_x_ratio)
                                         .quantised(self.slice_snapping),
                                 });
+
+                                stem.stem.slices.sort_by_key(|v| v.time_point);
+                                stem.stem.slices.dedup_by_key(|v| v.time_point);
+
                             // } else if response.secondary_clicked()
                             } else if rmb_down {
                                 let ratiod =
@@ -303,23 +307,50 @@ impl eframe::App for JonnahSlicer<'_> {
                             if response.middle_clicked()
                                 && let Some(audio_player) = &mut self.audio_player
                             {
-                                let start = crate::audio::TimePoint::new(3, 0.0);
-                                let end = start + crate::audio::TimePoint::new(4, 0.0);
+                                let cursor_time_point =
+                                    self.display_start.ratio(&end_time_point, mouse_x_ratio);
 
-                                let start_sample_index = start.mono_sample_index(
-                                    audio.sample_rate(),
-                                    &self.project.bpm_changes,
-                                );
-                                let end_sample_index = end.mono_sample_index(
-                                    audio.sample_rate(),
-                                    &self.project.bpm_changes,
-                                );
+                                // If there is a slice before our cursor
+                                if let Some(first_slice_index) = stem
+                                    .stem
+                                    .slices
+                                    .iter()
+                                    .position(|slice| slice.time_point < cursor_time_point)
+                                {
+                                    let before_slice = &stem.stem.slices[first_slice_index];
+                                    if let Some(second_slice) =
+                                        stem.stem.slices.get(first_slice_index + 1)
+                                    {
+                                        let start = before_slice.time_point;
+                                        let end = second_slice.time_point;
 
-                                audio_player.add_audio(
-                                    &stem.audio.as_ref().expect("NO AUDIO IN STEM?").samples()
-                                        [start_sample_index * audio.num_channels() as usize
-                                            ..end_sample_index * audio.num_channels() as usize],
-                                );
+                                        let start_sample_index = start.mono_sample_index(
+                                            audio.sample_rate(),
+                                            &self.project.bpm_changes,
+                                        );
+                                        let end_sample_index = end.mono_sample_index(
+                                            audio.sample_rate(),
+                                            &self.project.bpm_changes,
+                                        );
+
+                                        dbg!(
+                                            stem.stem.slices.len(),
+                                            start_sample_index,
+                                            end_sample_index
+                                        );
+
+                                        audio_player.add_audio(
+                                            &stem
+                                                .audio
+                                                .as_ref()
+                                                .expect("NO AUDIO IN STEM?")
+                                                .samples()
+                                                [start_sample_index * audio.num_channels() as usize
+                                                    ..end_sample_index
+                                                        * audio.num_channels() as usize],
+                                        );
+                                    }
+                                }
                             }
 
                             let painter = ui.painter_at(rect);

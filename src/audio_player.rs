@@ -55,10 +55,12 @@ impl AudioPlayer {
                                 .enumerate()
                                 .for_each(|(i, sample)| data[i] += sample);
 
-                            *slice = slice.split_off(2 * BUFFER_SIZE_PER_CHANNEL as usize);
-
-                            // Keep unfinished slices
-                            !slice.is_empty()
+                            if slice.len() > data.len() {
+                                *slice = slice.split_off(2 * BUFFER_SIZE_PER_CHANNEL as usize);
+                                true
+                            } else {
+                                false
+                            }
                         });
                 },
                 move |err| {
@@ -81,6 +83,11 @@ impl AudioPlayer {
     }
 
     pub fn add_audio(&self, audio: &[f32]) {
+        if audio.is_empty() {
+            eprintln!("empty audio buffer submitted to output stream");
+            return;
+        }
+
         self.audio_files
             .lock()
             .expect("Failed to lock audio")

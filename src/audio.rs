@@ -32,6 +32,16 @@ pub struct TimePoint {
     pub submeasure: f64,
 }
 
+impl Eq for TimePoint {}
+
+impl Ord for TimePoint {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        f64::from(*self)
+            .partial_cmp(&f64::from(*other))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    }
+}
+
 impl Default for TimePoint {
     fn default() -> Self {
         Self {
