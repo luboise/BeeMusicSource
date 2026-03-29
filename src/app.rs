@@ -237,6 +237,17 @@ impl eframe::App for JonnahSlicer<'_> {
 
                     const RECT_HEIGHT: f32 = 200.0;
 
+                    let slices = stem
+                        .stem
+                        .slices
+                        .iter()
+                        .filter_map(|slice| {
+                            (self.display_start..=end_time_point)
+                                .contains(&slice.time_point)
+                                .then_some(slice.clone())
+                        })
+                        .collect::<Vec<_>>();
+
                     for channel_index in 0..num_channels {
                         let (rect, response) = ui.allocate_exact_size(
                             egui::Vec2::new(ui.available_width(), RECT_HEIGHT),
@@ -291,19 +302,32 @@ impl eframe::App for JonnahSlicer<'_> {
                                 &painter,
                                 stroke,
                             );
+
+                            for slice in &slices {
+                                let ratio = self
+                                    .display_start
+                                    .get_ratio(&end_time_point, &slice.time_point);
+
+                                let tx = rect.min.x + (ratio as f32) * (rect.max.x - rect.min.x);
+
+                                let points = [
+                                    egui::Pos2 {
+                                        x: tx,
+                                        y: rect.min.y,
+                                    },
+                                    egui::Pos2 {
+                                        x: tx,
+                                        y: rect.max.y,
+                                    },
+                                ];
+
+                                painter.line_segment(
+                                    points,
+                                    egui::Stroke::new(5.0, egui::Color32::BLACK),
+                                );
+                            }
                         }
                     }
-
-                    let Some(first_rect) = first_rect else {
-                        continue;
-                    };
-
-                    // let painter = ui.painter_at(first_rect);
-                    // let stroke = egui::Stroke::new(20.0, egui::Color32::BLACK);
-
-                    // for slice in &stem.stem.slices {
-                    //     painter.line(first_rect, stroke);
-                    // }
                 }
             });
 
@@ -324,9 +348,7 @@ impl eframe::App for JonnahSlicer<'_> {
         });
     }
 
-    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
-        return;
-    }
+    fn ui(&mut self, _ui: &mut egui::Ui, _frame: &mut eframe::Frame) {}
 }
 
 fn powered_by_egui_and_eframe(ui: &mut egui::Ui) {

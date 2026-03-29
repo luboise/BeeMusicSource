@@ -26,7 +26,7 @@ impl Default for Snapping {
     }
 }
 
-#[derive(serde::Serialize, serde::Deserialize, PartialEq, Debug, Clone, Copy)]
+#[derive(serde::Serialize, serde::Deserialize, PartialOrd, PartialEq, Debug, Clone, Copy)]
 pub struct TimePoint {
     pub measure: i64,
     pub submeasure: f64,
@@ -81,6 +81,14 @@ impl TimePoint {
         let end = f64::from(*other);
 
         Self::from(start + ratio.into() * (end - start))
+    }
+
+    pub fn get_ratio(&self, end: &Self, t: &Self) -> f64 {
+        let start = f64::from(*self);
+        let end = f64::from(*end);
+        let t = f64::from(*t);
+
+        (t - start) / (end - start)
     }
 
     pub fn ceil(&self) -> i64 {

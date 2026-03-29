@@ -1,4 +1,4 @@
-#[derive(serde::Serialize, serde::Deserialize, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct Slice {
     pub time_point: crate::audio::TimePoint,
     // Room here later to add de-duplication of keysounds and custom keysound IDs
