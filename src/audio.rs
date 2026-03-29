@@ -1,7 +1,7 @@
 #[derive(serde::Serialize, serde::Deserialize, PartialEq, Debug, Clone, Copy)]
 pub struct TimePoint {
     pub measure: i64,
-    pub submeasure: f32,
+    pub submeasure: f64,
 }
 
 impl Default for TimePoint {
@@ -13,14 +13,23 @@ impl Default for TimePoint {
     }
 }
 
-impl From<TimePoint> for f32 {
+impl From<TimePoint> for f64 {
     fn from(value: TimePoint) -> Self {
         value.measure as Self + value.submeasure
     }
 }
 
+impl From<f64> for TimePoint {
+    fn from(value: f64) -> Self {
+        Self {
+            measure: value.trunc() as i64,
+            submeasure: value.fract(),
+        }
+    }
+}
+
 impl TimePoint {
-    pub fn new(measure: i64, submeasure: f32) -> Self {
+    pub fn new(measure: i64, submeasure: f64) -> Self {
         let measure = measure + submeasure.trunc() as i64;
         let submeasure = submeasure.fract();
 
@@ -28,6 +37,22 @@ impl TimePoint {
             measure,
             submeasure,
         }
+        .normalised()
+    }
+
+    pub fn clamped_to_zero(self) -> Self {
+        if self.measure < 0 {
+            Self::default()
+        } else {
+            self
+        }
+    }
+
+    pub fn ratio(&self, other: &Self, ratio: impl Into<f64>) -> Self {
+        let start = f64::from(*self);
+        let end = f64::from(*other);
+
+        Self::from(start + ratio.into() * (end - start))
     }
 
     pub fn ceil(&self) -> i64 {
@@ -36,10 +61,10 @@ impl TimePoint {
 
     /// Get the sample index of a time point within a given channel.
     pub fn mono_sample_index(&self, channel_sample_rate: i32, bpm_changes: &[BPMChange]) -> usize {
-        let time = ((self.measure * 4) as f32 + self.submeasure)
+        let time = ((self.measure * 4) as f64 + self.submeasure)
             * (60.0 / bpm_changes.first().expect("Fix this at some point").bpm);
 
-        (time * (channel_sample_rate as f32)) as usize
+        (time * (channel_sample_rate as f64)) as usize
     }
 
     fn normalise(&mut self) {
@@ -52,10 +77,24 @@ impl TimePoint {
             self.measure += 1;
             self.submeasure -= 1.0;
         }
+    }
 
-        if self.measure < 0 {
-            *self = Self::default();
+    fn normalised(&self) -> Self {
+        let mut ret = *self;
+        ret.normalise();
+        ret
+    }
+}
+
+impl std::ops::Neg for TimePoint {
+    type Output = Self;
+
+    fn neg(self) -> Self::Output {
+        Self {
+            measure: -self.measure,
+            submeasure: -self.submeasure,
         }
+        .normalised()
     }
 }
 
@@ -68,13 +107,11 @@ impl std::ops::Add for TimePoint {
         let measure = self.measure + rhs.measure + sub.trunc() as i64;
         let submeasure = sub.fract();
 
-        let mut tp = Self {
+        Self {
             measure,
             submeasure,
-        };
-
-        tp.normalise();
-        tp
+        }
+        .normalised()
     }
 }
 
@@ -88,13 +125,11 @@ impl std::ops::Sub for TimePoint {
         measure -= submeasure.abs().ceil() as i64;
         submeasure += submeasure.abs().ceil();
 
-        let mut tp = Self {
+        Self {
             measure,
             submeasure,
-        };
-
-        tp.normalise();
-        tp
+        }
+        .normalised()
     }
 }
 
@@ -117,17 +152,17 @@ mod time_point_tests;
 #[derive(Debug)]
 pub struct BPMChange {
     pub time_point: TimePoint,
-    pub bpm: f32,
+    pub bpm: f64,
 }
 
 #[derive(Debug)]
 pub struct AudioFile {
-    wav: wavers::Wav<f32>,
-    samples: wavers::Samples<f32>,
+    wav: wavers::Wav<f64>,
+    samples: wavers::Samples<f64>,
 }
 
 impl AudioFile {
-    pub fn new(mut wav: wavers::Wav<f32>) -> Result<Self, wavers::WaversError> {
+    pub fn new(mut wav: wavers::Wav<f64>) -> Result<Self, wavers::WaversError> {
         let samples = wav.read()?;
         Ok(Self { wav, samples })
     }
@@ -148,37 +183,6 @@ impl AudioFile {
         self.num_samples() / self.num_channels() as usize
     }
 
-    pub fn draw(
-        &self,
-        num_samples: Option<usize>,
-        rect: &egui::Rect,
-        painter: &egui::Painter,
-        stroke: egui::Stroke,
-    ) {
-        let num_drawn = num_samples
-            .map(|v| v.min(self.wav.n_samples()))
-            .unwrap_or_else(|| self.wav.n_samples());
-
-        let points = self
-            .samples
-            .iter()
-            .take(num_drawn)
-            .enumerate()
-            .map(|(i, sample)| {
-                let tx = i as f32 / (num_drawn - 1) as f32;
-                let ty = (sample + 1.0) / 2.0;
-                egui::pos2(
-                    rect.min.x + tx * rect.width(),
-                    rect.min.y + ty * rect.height(),
-                )
-            })
-            .collect::<Vec<_>>();
-
-        if points.len() > 1 {
-            painter.line(points, stroke);
-        }
-    }
-
     pub fn draw_channel(
         &self,
         channel_index: u16,
@@ -195,9 +199,9 @@ impl AudioFile {
             .unwrap_or_else(|| self.samples.len());
 
         let samples = (0..num_points).map(|i| {
-            let ratio = (i as f32) / ((num_points - 1) as f32);
+            let ratio = (i as f64) / ((num_points - 1) as f64);
 
-            let index = (ratio * (num_samples as f32)) as usize + starting_sample;
+            let index = (ratio * (num_samples as f64)) as usize + starting_sample;
 
             // Adjust for channel sample
             self.samples
@@ -211,13 +215,13 @@ impl AudioFile {
             .filter_map(|(i, sample)| {
                 let sample = sample?;
 
-                let tx = i as f32 / (num_points - 1) as f32;
+                let tx = i as f64 / (num_points - 1) as f64;
 
                 // [-1, 1] -> [0, 1], then invert for egui Y downwards
-                let ty = 1.0 - f32::midpoint(*sample, 1.0);
+                let ty = 1.0 - f64::midpoint(*sample, 1.0);
                 Some(egui::pos2(
-                    rect.min.x + tx * rect.width(),
-                    rect.min.y + ty * rect.height(),
+                    rect.min.x + tx as f32 * rect.width(),
+                    rect.min.y + ty as f32 * rect.height(),
                 ))
             })
             .collect::<Vec<_>>();
@@ -237,7 +241,7 @@ pub fn calculate_num_samples_all_channels(
 ) -> usize {
     let diff = end - start;
 
-    let num_beats = 4.0 * (diff.measure as f32 + diff.submeasure);
+    let num_beats = 4.0 * (diff.measure as f64 + diff.submeasure);
 
     if bpm_changes.len() > 1 {
         todo!("Calculate num samples unimplemented for multi-bpm projects.");
@@ -247,5 +251,5 @@ pub fn calculate_num_samples_all_channels(
 
     let time_seconds = num_beats * beat_length;
 
-    ((sample_rate as usize * num_channels as usize) as f32 * time_seconds).ceil() as usize
+    ((sample_rate as usize * num_channels as usize) as f64 * time_seconds).ceil() as usize
 }

@@ -90,11 +90,7 @@ impl JonnahSlicer<'_> {
                 stems: vec![LiveStem {
                     stem: crate::bms::Stem {
                         audio_path,
-                        slices: (0..8)
-                            .map(|v| crate::bms::Slice {
-                                time_point: crate::audio::TimePoint::new(v, 0.0),
-                            })
-                            .collect(),
+                        slices: vec![],
                     },
                     audio: None,
                 }],
@@ -138,10 +134,11 @@ impl eframe::App for JonnahSlicer<'_> {
         let scroll_delta = ctx.input(|i| i.smooth_scroll_delta);
         let home_pressed = ctx.input(|i| i.key_pressed(egui::Key::Home));
 
-        const SCROLL_SENSITIVITY: f32 = 0.3;
+        const SCROLL_SENSITIVITY: f64 = 0.3;
         if scroll_delta.y != 0.0 {
-            self.display_start +=
-                crate::audio::TimePoint::new(0, scroll_delta.y * SCROLL_SENSITIVITY);
+            self.display_start = (self.display_start
+                + crate::audio::TimePoint::new(0, -scroll_delta.y as f64 * SCROLL_SENSITIVITY))
+            .clamped_to_zero();
         }
 
         if home_pressed {
@@ -190,6 +187,9 @@ impl eframe::App for JonnahSlicer<'_> {
             let stroke = egui::Stroke::new(1.5, egui::Color32::LIGHT_BLUE);
 
             egui::ScrollArea::vertical().show(ui, |ui| {
+                let end_time_point =
+                    self.display_start + crate::audio::TimePoint::new(self.display_length, 0.0);
+
                 {
                     // Draw measures labels
                     let (rect, _response) = ui.allocate_exact_size(
@@ -197,13 +197,13 @@ impl eframe::App for JonnahSlicer<'_> {
                         egui::Sense::click(),
                     );
 
-                    let start = f32::from(self.display_start);
-                    let end = (self.display_start.measure + self.display_length) as f32;
+                    let start = f64::from(self.display_start);
+                    let end = (self.display_start.measure + self.display_length) as f64;
 
-                    let mut i = self.display_start.ceil() as f32;
+                    let mut i = self.display_start.ceil() as f64;
                     while i < end {
                         let tx = (i - start) / (end - start);
-                        let pos = egui::pos2(rect.min.x + tx * rect.width(), rect.min.y);
+                        let pos = egui::pos2(rect.min.x + tx as f32 * rect.width(), rect.min.y);
 
                         ui.put(
                             egui::Rect::from_pos(pos).expand(20.0),
@@ -214,7 +214,7 @@ impl eframe::App for JonnahSlicer<'_> {
                     }
                 }
 
-                for stem in &self.project.stems {
+                for stem in &mut self.project.stems {
                     let num_channels = stem.audio.as_ref().map(|v| v.num_channels()).unwrap_or(1);
 
                     let mut first_rect: Option<egui::Rect> = None;
@@ -234,7 +234,16 @@ impl eframe::App for JonnahSlicer<'_> {
                         if response.clicked()
                             && let Some(mouse_pos) = response.interact_pointer_pos()
                         {
-                            dbg!(mouse_pos);
+                            let first_rect =
+                                first_rect.as_ref().expect("This has been checked already");
+                            let x1 = first_rect.min.x;
+                            let x2 = first_rect.max.x;
+
+                            let tx = ((mouse_pos.x - x1) / (x2 - x1)).clamp(0.0, 1.0);
+
+                            stem.stem.slices.push(crate::bms::Slice {
+                                time_point: self.display_start.ratio(&end_time_point, tx),
+                            });
                         }
 
                         if let Some(audio) = &stem.audio {
