@@ -22,6 +22,8 @@ pub struct JonnahSlicer<'a> {
     /// The number of points to draw in channel
     visual_density: usize,
 
+    slice_snapping: crate::audio::Snapping,
+
     zoom_level: f32,
 }
 
@@ -61,6 +63,7 @@ impl Default for JonnahSlicer<'_> {
             jonnah_image: None,
             display_start: crate::audio::TimePoint::default(),
             display_length: 8,
+            slice_snapping: crate::audio::Snapping::default(),
         }
     }
 }
@@ -146,8 +149,6 @@ impl eframe::App for JonnahSlicer<'_> {
         }
 
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
-            // The top panel is often a good place for a menu bar:
-
             egui::MenuBar::new().ui(ui, |ui| {
                 // NOTE: no File->Quit on web pages!
                 let is_web = cfg!(target_arch = "wasm32");
@@ -161,6 +162,21 @@ impl eframe::App for JonnahSlicer<'_> {
                 }
 
                 egui::widgets::global_theme_preference_buttons(ui);
+            });
+
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
+                ui.label("Snapping: ");
+                for snap_v in [1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 64, 128] {
+                    let button = ui.button(format!("1/{snap_v}"));
+
+                    if self.slice_snapping.as_measure_denom() == snap_v {
+                        button.highlight();
+                    } else {
+                        if button.clicked() {
+                            self.slice_snapping = crate::audio::Snapping::Measure(snap_v);
+                        }
+                    }
+                }
             });
         });
 
@@ -242,7 +258,10 @@ impl eframe::App for JonnahSlicer<'_> {
                             let tx = ((mouse_pos.x - x1) / (x2 - x1)).clamp(0.0, 1.0);
 
                             stem.stem.slices.push(crate::bms::Slice {
-                                time_point: self.display_start.ratio(&end_time_point, tx),
+                                time_point: self
+                                    .display_start
+                                    .ratio(&end_time_point, tx)
+                                    .quantised(self.slice_snapping),
                             });
                         }
 

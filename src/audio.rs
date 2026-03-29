@@ -1,3 +1,31 @@
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+pub enum Snapping {
+    Measure(u16),
+    Beat(u16),
+}
+
+impl Snapping {
+    pub fn simplify(self) -> Self {
+        match self {
+            Self::Measure(m) => Self::Beat(m * 4),
+            Self::Beat(b) => Self::Beat(b),
+        }
+    }
+
+    pub fn as_measure_denom(self) -> u16 {
+        match self {
+            Self::Measure(m) => m,
+            Self::Beat(b) => b * 4,
+        }
+    }
+}
+
+impl Default for Snapping {
+    fn default() -> Self {
+        Self::Measure(16)
+    }
+}
+
 #[derive(serde::Serialize, serde::Deserialize, PartialEq, Debug, Clone, Copy)]
 pub struct TimePoint {
     pub measure: i64,
@@ -67,7 +95,7 @@ impl TimePoint {
         (time * (channel_sample_rate as f64)) as usize
     }
 
-    fn normalise(&mut self) {
+    pub fn normalise(&mut self) {
         while self.submeasure < 0.0 {
             self.measure -= 1;
             self.submeasure += 1.0;
@@ -79,10 +107,26 @@ impl TimePoint {
         }
     }
 
-    fn normalised(&self) -> Self {
+    pub fn normalised(&self) -> Self {
         let mut ret = *self;
         ret.normalise();
         ret
+    }
+
+    pub fn quantise(&mut self, snapping: Snapping) {
+        let beat_denom = match snapping {
+            Snapping::Measure(v) => f64::from(v) / 4.0,
+            Snapping::Beat(v) => f64::from(v),
+        };
+
+        let num_divisions = f64::from(*self) * beat_denom;
+
+        *self = (num_divisions.round() / beat_denom).into();
+    }
+
+    pub fn quantised(mut self, snapping: Snapping) -> Self {
+        self.quantise(snapping);
+        self
     }
 }
 
