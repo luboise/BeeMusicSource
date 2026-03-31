@@ -19,10 +19,10 @@ pub struct Project {
 pub fn normalise_project_path(path: impl AsRef<std::path::Path>) -> std::path::PathBuf {
     let path = path.as_ref();
 
-    if path.is_file() {
-        path.to_path_buf()
-    } else {
+    if path.is_dir() {
         path.join("project.jonnah")
+    } else {
+        path.to_path_buf()
     }
 }
 
@@ -43,8 +43,14 @@ pub fn save_project(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let save_path = normalise_project_path(path.as_ref());
 
-    eprintln!("Saving project to {}", save_path.display());
+    let parent = save_path.parent().ok_or("unable to get parent path")?;
 
+    if !parent.exists() {
+        println!("creating project dir {}", parent.display());
+        std::fs::create_dir_all(parent)?;
+    }
+
+    println!("saving project to {}", save_path.display());
     serde_json::to_writer_pretty(
         std::fs::OpenOptions::new()
             .create(true)

@@ -1,6 +1,6 @@
 mod app;
 mod audio;
 mod audio_player;
-mod bms;
+mod project;
 
 pub use app::JonnahSlicer;

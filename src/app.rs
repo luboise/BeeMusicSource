@@ -38,12 +38,12 @@ pub struct JonnahSlicer<'a> {
 
 #[derive(Debug)]
 struct LiveStem {
-    stem: crate::bms::Stem,
+    stem: crate::project::Stem,
     audio: Option<crate::audio::AudioFile>,
 }
 
-impl From<crate::bms::Stem> for LiveStem {
-    fn from(stem: crate::bms::Stem) -> Self {
+impl From<crate::project::Stem> for LiveStem {
+    fn from(stem: crate::project::Stem) -> Self {
         Self { stem, audio: None }
     }
 }
@@ -54,10 +54,10 @@ pub struct LiveProject {
     bpm_changes: Vec<crate::audio::BPMChange>,
 }
 
-impl TryFrom<crate::bms::Project> for LiveProject {
+impl TryFrom<crate::project::Project> for LiveProject {
     type Error = Box<dyn std::error::Error>;
 
-    fn try_from(project: crate::bms::Project) -> Result<Self, Self::Error> {
+    fn try_from(project: crate::project::Project) -> Result<Self, Self::Error> {
         Ok(Self {
             stems: project.stems.into_iter().map(|v| v.into()).collect(),
             bpm_changes: project.bpm_changes,
@@ -66,8 +66,8 @@ impl TryFrom<crate::bms::Project> for LiveProject {
 }
 
 impl LiveProject {
-    pub fn as_project(&self) -> crate::bms::Project {
-        crate::bms::Project {
+    pub fn as_project(&self) -> crate::project::Project {
+        crate::project::Project {
             stems: self.stems.iter().map(|stem| stem.stem.clone()).collect(),
             bpm_changes: self.bpm_changes.clone(),
         }
@@ -128,17 +128,13 @@ impl JonnahSlicer<'_> {
 
     // TODO: Document errors that this function can return
     pub fn save_to_disk(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        if let Err(e) = crate::bms::save_project(
+        crate::project::save_project(
             &self.project.as_project(),
             self.project_path
                 .clone()
-                .map(crate::bms::normalise_project_path)
+                .map(crate::project::normalise_project_path)
                 .unwrap_or_else(|| std::path::PathBuf::from("./project.jonnah")),
-        ) {
-            eprintln!("error saving to disk: {e}");
-        }
-
-        Ok(())
+        )
     }
 }
 
@@ -153,9 +149,10 @@ impl eframe::App for JonnahSlicer<'_> {
         if self.project_path.is_some() {
             match &self.project_status {
                 ProjectStatus::None => {
-                    self.project = crate::bms::load_project(self.project_path.as_ref().unwrap())
-                        .and_then(|project| project.try_into())
-                        .unwrap_or_default();
+                    self.project =
+                        crate::project::load_project(self.project_path.as_ref().unwrap())
+                            .and_then(|project| project.try_into())
+                            .unwrap_or_default();
 
                     self.project_status = ProjectStatus::Loaded;
                 }
@@ -205,7 +202,7 @@ impl eframe::App for JonnahSlicer<'_> {
                     .unwrap_or_else(|| path.canonicalize().unwrap_or(path));
 
                 self.project.stems.push(LiveStem {
-                    stem: crate::bms::Stem {
+                    stem: crate::project::Stem {
                         audio_path,
                         slices: vec![],
                     },
@@ -371,7 +368,7 @@ impl eframe::App for JonnahSlicer<'_> {
                             && rect.contains(*mouse_pos)
                         {
                             if lmb_down {
-                                stem.stem.slices.push(crate::bms::Slice {
+                                stem.stem.slices.push(crate::project::Slice {
                                     time_point: self
                                         .display_start
                                         .ratio(&end_time_point, mouse_x_ratio)
