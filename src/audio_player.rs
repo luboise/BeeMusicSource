@@ -17,13 +17,13 @@ impl AudioPlayer {
             .default_output_device()
             .ok_or_else(|| "No audio device available.".to_owned())?;
 
-        let mut supported_configs_range = device
-            .supported_output_configs()
-            .expect("error while querying configs");
+        let supported_configs_range = device.supported_output_configs()?.collect::<Vec<_>>();
+
         let supported_config = supported_configs_range
-            .next()
-            .expect("no supported config?!")
-            .with_max_sample_rate();
+            .first()
+            .as_ref()
+            .ok_or("no supported audio config")?
+            .with_sample_rate(44100);
 
         let mut player = Self {
             host,
@@ -37,13 +37,13 @@ impl AudioPlayer {
         let stream = player
             .device
             .build_output_stream(
-                &cpal::StreamConfig {
-                    channels: 2,
-                    sample_rate: 44100,
-                    buffer_size: cpal::BufferSize::Fixed(BUFFER_SIZE_PER_CHANNEL),
-                },
-                // &supported_config.config(),
+                &supported_config.config(),
                 move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                    // need to clear existing buffer first
+                    for val in data.iter_mut() {
+                        *val = 0.0;
+                    }
+
                     audio_files_clone
                         .lock()
                         .expect("Bad mutex")
