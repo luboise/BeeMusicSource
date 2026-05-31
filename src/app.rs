@@ -390,7 +390,8 @@ impl eframe::App for JonnahSlicer<'_> {
                         }
 
                         if let Some(audio) = &stem.audio {
-                            if response.middle_clicked()
+                            if (response.middle_clicked()
+                                || ui.input(|input| input.key_pressed(egui::Key::G)))
                                 && let Some(audio_player) = &mut self.audio_player
                             {
                                 let cursor_time_point =
