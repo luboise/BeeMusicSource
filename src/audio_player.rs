@@ -4,7 +4,8 @@ pub struct AudioPlayer {
     host: cpal::platform::Host,
     device: cpal::platform::Device,
     output_streams: Vec<cpal::platform::Stream>,
-    audio_files: std::sync::Arc<std::sync::Mutex<Vec<Vec<f32>>>>,
+    config: cpal::StreamConfig,
+    audio_files: std::sync::Arc<std::sync::Mutex<Vec<AudioPlayback>>>,
 }
 
 impl AudioPlayer {
@@ -17,18 +18,32 @@ impl AudioPlayer {
             .default_output_device()
             .ok_or_else(|| "No audio device available.".to_owned())?;
 
-        let supported_configs_range = device.supported_output_configs()?.collect::<Vec<_>>();
+        let config = device
+            .supported_output_configs()?
+            .find_map(|output_config| {
+                if output_config.channels() != 2 {
+                    return None;
+                }
 
-        let supported_config = supported_configs_range
-            .first()
-            .as_ref()
+                let cpal::SupportedBufferSize::Range { min, max } = output_config.buffer_size()
+                else {
+                    return None;
+                };
+
+                if (*min..=*max).contains(&BUFFER_SIZE_PER_CHANNEL) {
+                    output_config.try_with_sample_rate(44100)
+                } else {
+                    None
+                }
+            })
             .ok_or("no supported audio config")?
-            .with_sample_rate(44100);
+            .config();
 
         let mut player = Self {
             host,
             device,
             output_streams: vec![],
+            config: config.clone(),
             audio_files: Default::default(),
         };
 
@@ -37,31 +52,36 @@ impl AudioPlayer {
         let stream = player
             .device
             .build_output_stream(
-                &supported_config.config(),
+                &player.config.clone(),
                 move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                    // TODO: Figure out how to acquire this so it's not a const
+                    const CHANNEL_COUNT: usize = 2;
+                    let num_samples = data.len() / CHANNEL_COUNT;
+
                     // need to clear existing buffer first
                     for val in data.iter_mut() {
                         *val = 0.0;
                     }
 
-                    audio_files_clone
-                        .lock()
-                        .expect("Bad mutex")
-                        .retain_mut(|slice| {
-                            // Write the slice into the buffer
-                            slice
-                                .iter()
-                                .take(data.len().min(2 * BUFFER_SIZE_PER_CHANNEL as usize))
-                                .enumerate()
-                                .for_each(|(i, sample)| data[i] += sample);
+                    let mut ctx = audio_files_clone.lock().expect("Bad mutex");
+                    ctx.retain_mut(|playback| {
+                        let Some(slices) = playback.read(num_samples) else {
+                            return false;
+                        };
 
-                            if slice.len() > data.len() {
-                                *slice = slice.split_off(2 * BUFFER_SIZE_PER_CHANNEL as usize);
-                                true
-                            } else {
-                                false
-                            }
-                        });
+                        for (i, data) in data.iter_mut().enumerate() {
+                            let Some(val) = slices
+                                .get(i % CHANNEL_COUNT)
+                                .and_then(|v| v.get(i / CHANNEL_COUNT))
+                            else {
+                                break;
+                            };
+
+                            *data += *val;
+                        }
+
+                        true
+                    });
                 },
                 move |err| {
                     eprintln!("{err}");
@@ -82,19 +102,107 @@ impl AudioPlayer {
         }
     }
 
-    pub fn add_audio(&self, audio: &[f32]) {
-        if audio.is_empty() {
+    pub fn add_audio(&self, playback: AudioPlayback) {
+        if playback.stream.channels.is_empty() {
             eprintln!("empty audio buffer submitted to output stream");
             return;
+        }
+        if playback.cursor
+            >= playback
+                .stream
+                .channels
+                .iter()
+                .map(|channel| channel.len())
+                .max()
+                .unwrap_or(0)
+        {
+            eprintln!("cursor is past playback length");
         }
 
         self.audio_files
             .lock()
             .expect("Failed to lock audio")
-            .push(audio.to_vec());
+            .push(playback);
 
-        self.output_streams
+        for stream in &self.output_streams {
+            stream.play().unwrap();
+        }
+    }
+}
+
+pub struct AudioPlayback {
+    stream: std::sync::Arc<AudioStream>,
+    length: usize,
+    cursor: usize,
+}
+
+impl AudioPlayback {
+    pub fn new(
+        stream: impl Into<AudioStream>,
+        cursor_start: Option<usize>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let stream = std::sync::Arc::new(stream.into());
+
+        let length = stream
+            .channels
             .iter()
-            .for_each(|stream| stream.play().unwrap());
+            .map(|channel| channel.len())
+            .max()
+            .ok_or("no max length? no channels on audio?")?;
+
+        let cursor = cursor_start.unwrap_or(0);
+        if cursor > length {
+            return Err(format!("cursor start {cursor} is ahead of num samples {length}").into());
+        }
+
+        Ok(Self {
+            stream,
+            length,
+            cursor,
+        })
+    }
+
+    pub fn read(&mut self, num_samples: usize) -> Option<Vec<&[f32]>> {
+        let read_size = num_samples.min(self.samples_remaining_per_channel());
+        if read_size == 0 {
+            return None;
+        }
+
+        let start = self.cursor;
+        let end = self.cursor + read_size;
+
+        let slices = self
+            .stream
+            .channels
+            .iter()
+            .map(|channel| &channel[self.cursor..self.cursor + read_size])
+            .collect();
+
+        self.cursor = (self.cursor + read_size).min(self.length);
+        Some(slices)
+    }
+
+    pub fn samples_remaining_per_channel(&self) -> usize {
+        self.length - self.cursor
+    }
+
+    pub fn total_samples_remaining(&self) -> usize {
+        self.stream.channels.len() * self.samples_remaining_per_channel()
+    }
+}
+
+pub struct AudioStream {
+    channels: Vec<Vec<f32>>,
+}
+
+impl From<Vec<Vec<f32>>> for AudioStream {
+    fn from(value: Vec<Vec<f32>>) -> Self {
+        Self { channels: value }
+    }
+}
+
+impl AudioStream {
+    pub fn new(channels: Vec<Vec<f32>>) -> Self {
+        Self { channels }
     }
 }

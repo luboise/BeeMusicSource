@@ -345,6 +345,8 @@ impl eframe::App for JonnahSlicer<'_> {
                         })
                         .collect::<Vec<_>>();
 
+                    let mut cursor_time_point = None;
+
                     for channel_index in 0..num_channels {
                         let (rect, response) = ui.allocate_exact_size(
                             egui::Vec2::new(ui.available_width(), RECT_HEIGHT),
@@ -390,43 +392,12 @@ impl eframe::App for JonnahSlicer<'_> {
                         }
 
                         if let Some(audio) = &stem.audio {
-                            if (response.middle_clicked()
-                                || ui.input(|input| input.key_pressed(egui::Key::G)))
-                                && let Some(audio_player) = &mut self.audio_player
+                            if self.audio_player.is_some()
+                                && (response.middle_clicked()
+                                    || ui.input(|input| input.key_pressed(egui::Key::G)))
                             {
-                                let cursor_time_point =
-                                    self.display_start.ratio(&end_time_point, mouse_x_ratio);
-
-                                stem.stem.slices.sort_by_key(|v| v.time_point);
-
-                                // If there is a slice before our cursor
-                                if let Some((first_slice_index, first_slice)) = stem
-                                    .stem
-                                    .slices
-                                    .iter()
-                                    .enumerate()
-                                    .rfind(|(_, slice)| slice.time_point < cursor_time_point)
-                                    && let Some(second_slice) =
-                                        stem.stem.slices.get(first_slice_index + 1)
-                                {
-                                    let start = first_slice.time_point;
-                                    let end = second_slice.time_point;
-
-                                    let start_sample_index = start.mono_sample_index(
-                                        audio.sample_rate(),
-                                        &self.project.bpm_changes,
-                                    );
-                                    let end_sample_index = end.mono_sample_index(
-                                        audio.sample_rate(),
-                                        &self.project.bpm_changes,
-                                    );
-
-                                    audio_player.add_audio(
-                                        &stem.audio.as_ref().expect("NO AUDIO IN STEM?").samples()
-                                            [start_sample_index * audio.num_channels() as usize
-                                                ..end_sample_index * audio.num_channels() as usize],
-                                    );
-                                }
+                                cursor_time_point =
+                                    Some(self.display_start.ratio(&end_time_point, mouse_x_ratio));
                             }
 
                             let painter = ui.painter_at(rect);
@@ -504,6 +475,52 @@ impl eframe::App for JonnahSlicer<'_> {
 
                                 painter.line_segment(points, slice_stroke);
                             }
+                        }
+                    }
+                    if let Some(cursor_time_point) = cursor_time_point {
+                        stem.stem.slices.sort_by_key(|v| v.time_point);
+
+                        let Some(audio) = &stem.audio else { panic!() };
+
+                        // If there is a slice before our cursor
+                        if let Some((first_slice_index, first_slice)) = stem
+                            .stem
+                            .slices
+                            .iter()
+                            .enumerate()
+                            .rfind(|(_, slice)| slice.time_point < cursor_time_point)
+                            && let Some(second_slice) = stem.stem.slices.get(first_slice_index + 1)
+                        {
+                            let start = first_slice.time_point;
+                            let end = second_slice.time_point;
+
+                            let start_sample_index = start
+                                .mono_sample_index(audio.sample_rate(), &self.project.bpm_changes);
+                            let end_sample_index = end
+                                .mono_sample_index(audio.sample_rate(), &self.project.bpm_changes);
+
+                            // TODO: Put make this pre-trim it before fetching the channels?
+                            let channels = stem
+                                .audio
+                                .as_ref()
+                                .expect("NO AUDIO IN STEM?")
+                                .channels()
+                                .into_iter()
+                                .map(|channel| {
+                                    channel
+                                        .get(start_sample_index..end_sample_index)
+                                        .expect("bad channel")
+                                        .to_vec()
+                                })
+                                .collect::<Vec<_>>();
+
+                            let playback = crate::audio_player::AudioPlayback::new(
+                                // TODO: Make this not clone the channels completely
+                                channels, None,
+                            )
+                            .expect("failed to add audio");
+
+                            self.audio_player.as_ref().unwrap().add_audio(playback);
                         }
                     }
                 }

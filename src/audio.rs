@@ -259,6 +259,16 @@ impl AudioFile {
         &self.samples
     }
 
+    pub fn channels(&self) -> Vec<Vec<f32>> {
+        let mut vecs = vec![vec![]; self.num_channels().into()];
+
+        for (i, sample) in self.samples.iter().enumerate() {
+            vecs[i % usize::from(self.num_channels())].push(*sample);
+        }
+
+        vecs
+    }
+
     pub fn draw_channel(
         &self,
         channel_index: u16,
