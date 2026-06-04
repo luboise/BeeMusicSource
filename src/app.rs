@@ -1,3 +1,5 @@
+use std::convert::TryInto;
+
 use crate::audio::calculate_num_samples_all_channels;
 
 #[derive(Default, Debug)]
@@ -54,7 +56,7 @@ pub struct LiveProject {
     bpm_changes: Vec<crate::audio::BPMChange>,
 }
 
-impl TryFrom<crate::project::Project> for LiveProject {
+impl std::convert::TryFrom<crate::project::Project> for LiveProject {
     type Error = Box<dyn std::error::Error>;
 
     fn try_from(project: crate::project::Project) -> Result<Self, Self::Error> {
@@ -288,15 +290,12 @@ impl eframe::App for JonnahSlicer<'_> {
 
             let display_length = (8.0 * self.zoom_level) as i64;
 
-            let waveform_stroke =
-                egui::Stroke::new(1.5, egui::Color32::from_gray(190).linear_multiply(0.7));
-
             egui::ScrollArea::vertical().show(ui, |ui| {
                 let end_time_point =
                     self.display_start + crate::audio::TimePoint::new(display_length, 0.0);
 
+                // Draw measures labels
                 {
-                    // Draw measures labels
                     let (rect, _response) = ui.allocate_exact_size(
                         egui::Vec2::new(ui.available_width(), 20.0),
                         egui::Sense::click(),
@@ -319,210 +318,84 @@ impl eframe::App for JonnahSlicer<'_> {
                     }
                 }
 
-                let (mouse_pos, lmb_down, rmb_down) = ctx.input(|i| {
-                    (
-                        i.pointer.latest_pos(),
-                        i.pointer.button_down(egui::PointerButton::Primary),
-                        i.pointer.button_down(egui::PointerButton::Secondary),
-                    )
-                });
-
                 for stem in &mut self.project.stems {
-                    let num_channels = stem.audio.as_ref().map(|v| v.num_channels()).unwrap_or(1);
+                    let (rect, event) = draw_stem(
+                        stem,
+                        &self.project.bpm_changes,
+                        ctx,
+                        ui,
+                        self.display_start,
+                        end_time_point,
+                    );
 
-                    let mut first_rect: Option<egui::Rect> = None;
+                    match event {
+                        Some(StemEvent::PlayAudio(time_point)) if let Some(audio) = &stem.audio => {
+                            stem.stem.slices.sort_by_key(|v| v.time_point);
 
-                    const RECT_HEIGHT: f32 = 200.0;
-
-                    let slices = stem
-                        .stem
-                        .slices
-                        .iter()
-                        .filter_map(|slice| {
-                            (self.display_start..=end_time_point)
-                                .contains(&slice.time_point)
-                                .then_some(slice.clone())
-                        })
-                        .collect::<Vec<_>>();
-
-                    let mut cursor_time_point = None;
-
-                    for channel_index in 0..num_channels {
-                        let (rect, response) = ui.allocate_exact_size(
-                            egui::Vec2::new(ui.available_width(), RECT_HEIGHT),
-                            egui::Sense::click(),
-                        );
-
-                        if first_rect.is_none() {
-                            first_rect.replace(rect);
-                        }
-
-                        let mouse_x_ratio = {
-                            let first_rect =
-                                first_rect.as_ref().expect("This has been checked already");
-                            let x1 = first_rect.min.x;
-                            let x2 = first_rect.max.x;
-
-                            ((mouse_pos.unwrap_or_default().x - x1) / (x2 - x1)).clamp(0.0, 1.0)
-                        };
-
-                        if let Some(mouse_pos) = &mouse_pos
-                            && rect.contains(*mouse_pos)
-                        {
-                            if lmb_down {
-                                stem.stem.slices.push(crate::project::Slice {
-                                    time_point: self
-                                        .display_start
-                                        .ratio(&end_time_point, mouse_x_ratio)
-                                        .quantised(self.slice_snapping),
-                                });
-
-                                stem.stem.slices.dedup_by_key(|v| v.time_point);
-                                stem.stem.slices.sort_by_key(|v| v.time_point);
-                            } else if rmb_down {
-                                let ratiod =
-                                    self.display_start.ratio(&end_time_point, mouse_x_ratio);
-
-                                const DELETE_DISTANCE: f64 = 0.15;
-
-                                stem.stem.slices.retain(|slice| {
-                                    f64::from(slice.time_point - ratiod).abs() > DELETE_DISTANCE
-                                });
-                            }
-                        }
-
-                        if let Some(audio) = &stem.audio {
-                            if self.audio_player.is_some()
-                                && (response.middle_clicked()
-                                    || ui.input(|input| input.key_pressed(egui::Key::G)))
+                            // If there is a slice before our cursor
+                            if let Some((first_slice_index, first_slice)) = stem
+                                .stem
+                                .slices
+                                .iter()
+                                .enumerate()
+                                .rfind(|(_, slice)| slice.time_point < time_point)
+                                && let Some(second_slice) =
+                                    stem.stem.slices.get(first_slice_index + 1)
                             {
-                                cursor_time_point =
-                                    Some(self.display_start.ratio(&end_time_point, mouse_x_ratio));
-                            }
+                                let start = first_slice.time_point;
+                                let end = second_slice.time_point;
 
-                            let painter = ui.painter_at(rect);
-                            painter.rect_filled(rect, 0.0, egui::Color32::from_gray(35));
-
-                            let num_samples = calculate_num_samples_all_channels(
-                                self.display_start,
-                                self.display_start
-                                    + crate::audio::TimePoint::new(display_length, 0.0),
-                                audio.sample_rate(),
-                                audio.num_channels(),
-                                &self.project.bpm_changes,
-                            );
-
-                            let starting_sample = self
-                                .display_start
-                                .mono_sample_index(audio.sample_rate(), &self.project.bpm_changes);
-
-                            audio.draw_channel(
-                                channel_index,
-                                Some(self.visual_density),
-                                starting_sample,
-                                num_samples / usize::from(num_channels),
-                                &rect,
-                                &painter,
-                                waveform_stroke,
-                            );
-
-                            let slice_stroke = egui::Stroke::new(3.0, egui::Color32::WHITE);
-
-                            let measure_stroke = egui::Stroke::new(
-                                2.0,
-                                egui::Color32::DARK_BLUE.linear_multiply(0.7),
-                            );
-
-                            for i in self.display_start.measure..end_time_point.measure {
-                                let ratio = self.display_start.get_ratio(
-                                    &end_time_point,
-                                    &crate::audio::TimePoint::new(i, 0.0),
+                                let start_sample_index = start.mono_sample_index(
+                                    audio.sample_rate(),
+                                    &self.project.bpm_changes,
+                                );
+                                let end_sample_index = end.mono_sample_index(
+                                    audio.sample_rate(),
+                                    &self.project.bpm_changes,
                                 );
 
-                                let tx = rect.min.x + (ratio as f32) * (rect.max.x - rect.min.x);
+                                // TODO: Put make this pre-trim it before fetching the channels?
+                                let channels = stem
+                                    .audio
+                                    .as_ref()
+                                    .expect("NO AUDIO IN STEM?")
+                                    .channels()
+                                    .into_iter()
+                                    .map(|channel| {
+                                        channel
+                                            .get(start_sample_index..end_sample_index)
+                                            .expect("bad channel")
+                                            .to_vec()
+                                    })
+                                    .collect::<Vec<_>>();
 
-                                let points = [
-                                    egui::Pos2 {
-                                        x: tx,
-                                        y: rect.min.y,
-                                    },
-                                    egui::Pos2 {
-                                        x: tx,
-                                        y: rect.max.y,
-                                    },
-                                ];
+                                let playback = crate::audio_player::AudioPlayback::new(
+                                    // TODO: Make this not clone the channels completely
+                                    channels, None,
+                                )
+                                .expect("failed to add audio");
 
-                                painter.line_segment(points, measure_stroke);
-                            }
-
-                            for slice in &slices {
-                                let ratio = self
-                                    .display_start
-                                    .get_ratio(&end_time_point, &slice.time_point);
-
-                                let tx = rect.min.x + (ratio as f32) * (rect.max.x - rect.min.x);
-
-                                let points = [
-                                    egui::Pos2 {
-                                        x: tx,
-                                        y: rect.min.y,
-                                    },
-                                    egui::Pos2 {
-                                        x: tx,
-                                        y: rect.max.y,
-                                    },
-                                ];
-
-                                painter.line_segment(points, slice_stroke);
+                                self.audio_player.as_ref().unwrap().add_audio(playback);
                             }
                         }
-                    }
-                    if let Some(cursor_time_point) = cursor_time_point {
-                        stem.stem.slices.sort_by_key(|v| v.time_point);
-
-                        let Some(audio) = &stem.audio else { panic!() };
-
-                        // If there is a slice before our cursor
-                        if let Some((first_slice_index, first_slice)) = stem
-                            .stem
-                            .slices
-                            .iter()
-                            .enumerate()
-                            .rfind(|(_, slice)| slice.time_point < cursor_time_point)
-                            && let Some(second_slice) = stem.stem.slices.get(first_slice_index + 1)
-                        {
-                            let start = first_slice.time_point;
-                            let end = second_slice.time_point;
-
-                            let start_sample_index = start
-                                .mono_sample_index(audio.sample_rate(), &self.project.bpm_changes);
-                            let end_sample_index = end
-                                .mono_sample_index(audio.sample_rate(), &self.project.bpm_changes);
-
-                            // TODO: Put make this pre-trim it before fetching the channels?
-                            let channels = stem
-                                .audio
-                                .as_ref()
-                                .expect("NO AUDIO IN STEM?")
-                                .channels()
-                                .into_iter()
-                                .map(|channel| {
-                                    channel
-                                        .get(start_sample_index..end_sample_index)
-                                        .expect("bad channel")
-                                        .to_vec()
-                                })
-                                .collect::<Vec<_>>();
-
-                            let playback = crate::audio_player::AudioPlayback::new(
-                                // TODO: Make this not clone the channels completely
-                                channels, None,
-                            )
-                            .expect("failed to add audio");
-
-                            self.audio_player.as_ref().unwrap().add_audio(playback);
+                        Some(StemEvent::LeftClick(time_point)) => {
+                            stem.stem.slices.push(crate::project::Slice {
+                                time_point: time_point.quantised(self.slice_snapping),
+                            });
                         }
-                    }
+
+                        Some(StemEvent::RightClick(time_point)) => {
+                            stem.stem.slices.dedup_by_key(|v| v.time_point);
+                            stem.stem.slices.sort_by_key(|v| v.time_point);
+
+                            const DELETE_DISTANCE: f64 = 0.15;
+
+                            stem.stem.slices.retain(|slice| {
+                                f64::from(slice.time_point - time_point).abs() > DELETE_DISTANCE
+                            });
+                        }
+                        Some(StemEvent::PlayAudio(_)) | None => (),
+                    };
                 }
             });
 
@@ -558,4 +431,152 @@ fn powered_by_egui_and_eframe(ui: &mut egui::Ui) {
         );
         ui.label(".");
     });
+}
+
+enum StemEvent {
+    LeftClick(crate::audio::TimePoint),
+    RightClick(crate::audio::TimePoint),
+    PlayAudio(crate::audio::TimePoint),
+}
+
+#[must_use]
+fn draw_stem(
+    live_stem: &LiveStem,
+    bpm_changes: &[crate::audio::BPMChange],
+    ctx: &egui::Context,
+    ui: &mut egui::Ui,
+    display_start: crate::audio::TimePoint,
+    end: crate::audio::TimePoint,
+) -> (egui::Rect, Option<StemEvent>) {
+    const RECT_HEIGHT: f32 = 200.0;
+
+    let (mouse_pos, lmb_down, rmb_down) = ctx.input(|i| {
+        (
+            i.pointer.latest_pos(),
+            i.pointer.button_down(egui::PointerButton::Primary),
+            i.pointer.button_down(egui::PointerButton::Secondary),
+        )
+    });
+
+    let (rect, response) = ui.allocate_exact_size(
+        egui::Vec2::new(ui.available_width(), RECT_HEIGHT),
+        egui::Sense::click(),
+    );
+    let mouse_x_ratio = {
+        let x1 = rect.min.x;
+        let x2 = rect.max.x;
+
+        ((mouse_pos.unwrap_or_default().x - x1) / (x2 - x1)).clamp(0.0, 1.0)
+    };
+
+    let stroke = egui::Stroke::new(3.0, egui::Color32::WHITE);
+
+    let painter = ui.painter_at(rect);
+
+    let slices = live_stem
+        .stem
+        .slices
+        .iter()
+        .filter_map(|slice| {
+            (display_start..=end)
+                .contains(&slice.time_point)
+                .then_some(slice.clone())
+        })
+        .collect::<Vec<_>>();
+
+    painter.rect_filled(rect, 0.0, egui::Color32::from_gray(35));
+    for slice in &slices {
+        let ratio = display_start.get_ratio(&end, &slice.time_point);
+
+        let tx = rect.min.x + (ratio as f32) * (rect.max.x - rect.min.x);
+
+        let points = [
+            egui::Pos2 {
+                x: tx,
+                y: rect.min.y,
+            },
+            egui::Pos2 {
+                x: tx,
+                y: rect.max.y,
+            },
+        ];
+
+        painter.line_segment(points, stroke);
+
+        for i in display_start.measure..end.measure {
+            let ratio = display_start.get_ratio(&end, &crate::audio::TimePoint::new(i, 0.0));
+
+            let tx = rect.min.x + (ratio as f32) * (rect.max.x - rect.min.x);
+
+            let points = [
+                egui::Pos2 {
+                    x: tx,
+                    y: rect.min.y,
+                },
+                egui::Pos2 {
+                    x: tx,
+                    y: rect.max.y,
+                },
+            ];
+
+            let measure_stroke =
+                egui::Stroke::new(2.0, egui::Color32::DARK_BLUE.linear_multiply(0.7));
+            painter.line_segment(points, measure_stroke);
+        }
+    }
+
+    let mut event = None;
+
+    if let Some(mouse_pos) = &mouse_pos
+        && rect.contains(*mouse_pos)
+    {
+        let click_point = display_start.ratio(&end, mouse_x_ratio);
+
+        if lmb_down {
+            event = Some(StemEvent::LeftClick(click_point));
+        } else if rmb_down {
+            event = Some(StemEvent::RightClick(click_point));
+        }
+    }
+
+    if let Some(audio) = &live_stem.audio {
+        let num_channels = audio.num_channels();
+
+        let display_length = (end - display_start).ceil();
+
+        let num_samples = calculate_num_samples_all_channels(
+            display_start,
+            end,
+            // display_start + crate::audio::TimePoint::new(display_length, 0.0),
+            audio.sample_rate(),
+            num_channels,
+            bpm_changes,
+        );
+
+        let starting_sample = display_start.mono_sample_index(audio.sample_rate(), bpm_changes);
+
+        // TODO: Move this somewhere else?
+        let visual_density = 6000;
+
+        let waveform_stroke =
+            egui::Stroke::new(1.5, egui::Color32::from_gray(190).linear_multiply(0.7));
+
+        audio.draw_channel(
+            0,
+            Some(visual_density),
+            starting_sample,
+            num_samples / usize::from(num_channels),
+            &rect,
+            &painter,
+            waveform_stroke,
+        );
+
+        if response.middle_clicked() || ui.input(|input| input.key_pressed(egui::Key::G)) {
+            event = Some(StemEvent::PlayAudio(
+                display_start.ratio(&end, mouse_x_ratio),
+            ));
+        }
+    }
+
+    (rect, event)
 }
