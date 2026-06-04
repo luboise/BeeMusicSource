@@ -395,7 +395,7 @@ impl eframe::App for JonnahSlicer<'_> {
                             });
                         }
                         Some(StemEvent::PlayAudio(_)) | None => (),
-                    };
+                    }
                 }
             });
 

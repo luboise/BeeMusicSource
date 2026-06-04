@@ -117,8 +117,12 @@ impl TimePoint {
 
     /// Get the sample index of a time point within a given channel.
     pub fn mono_sample_index(&self, channel_sample_rate: i32, bpm_changes: &[BPMChange]) -> usize {
-        let time =
-            f64::from(*self) * (60.0 / bpm_changes.first().expect("Fix this at some point").bpm);
+        let measure = f64::from(*self);
+        // TODO: Fix this to be BPM change dependent for other time signatures
+        let beats_per_measure = 4.0;
+        let beat_length = 60.0 / bpm_changes.first().expect("Fix this at some point").bpm;
+
+        let time = measure * beats_per_measure * beat_length;
 
         (time * (channel_sample_rate as f64)) as usize
     }
