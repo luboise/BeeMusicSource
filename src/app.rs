@@ -1,7 +1,3 @@
-use std::convert::TryInto;
-
-use crate::audio::calculate_num_samples_all_channels;
-
 #[derive(Default, Debug)]
 enum ProjectStatus {
     #[default]
@@ -544,14 +540,14 @@ fn draw_stem(
 
         let display_length = (end - display_start).ceil();
 
-        let num_samples = calculate_num_samples_all_channels(
+        let num_samples = crate::audio::calculate_num_samples_all_channels(
             display_start,
             end,
-            // display_start + crate::audio::TimePoint::new(display_length, 0.0),
             audio.sample_rate(),
             num_channels,
             bpm_changes,
-        );
+        )
+        .unwrap();
 
         let starting_sample = display_start.mono_sample_index(audio.sample_rate(), bpm_changes);
 

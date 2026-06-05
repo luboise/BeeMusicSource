@@ -122,9 +122,18 @@ impl TimePoint {
         let beats_per_measure = 4.0;
         let beat_length = 60.0 / bpm_changes.first().expect("Fix this at some point").bpm;
 
-        let time = measure * beats_per_measure * beat_length;
-
-        (time * (channel_sample_rate as f64)) as usize
+        // TODO: Get this of this unwrap, or make this return a result
+        calculate_num_samples_all_channels(
+            TimePoint {
+                measure: 0,
+                submeasure: 0.0,
+            },
+            *self,
+            channel_sample_rate,
+            1,
+            bpm_changes,
+        )
+        .unwrap()
     }
 
     pub fn normalise(&mut self) {
@@ -225,7 +234,7 @@ impl std::ops::SubAssign for TimePoint {
 #[path = "./time_point_tests.rs"]
 mod time_point_tests;
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct BPMChange {
     pub time_point: TimePoint,
     pub bpm: f64,
@@ -328,18 +337,63 @@ pub fn calculate_num_samples_all_channels(
     sample_rate: i32,
     num_channels: u16,
     bpm_changes: &[BPMChange],
-) -> usize {
+) -> Result<usize, Box<dyn std::error::Error>> {
     let diff = end - start;
 
     let num_beats = 4.0 * (diff.measure as f64 + diff.submeasure);
 
-    if bpm_changes.len() > 1 {
-        todo!("Calculate num samples unimplemented for multi-bpm projects.");
-    }
+    let prefirst_bpm_change = bpm_changes
+        .iter()
+        .position(|bpm_change| bpm_change.time_point <= start)
+        .ok_or("no start time point")?;
 
-    let beat_length = 60.0 / bpm_changes.first().expect("this fo testing fool").bpm;
+    let final_bpm_change = bpm_changes
+        .iter()
+        .rposition(|bpm_change| end >= bpm_change.time_point)
+        .ok_or("no end time point")?;
 
-    let time_seconds = num_beats * beat_length;
+    let first = [BPMChange {
+        time_point: start,
+        bpm: bpm_changes[prefirst_bpm_change].bpm,
+    }];
 
-    ((sample_rate as usize * num_channels as usize) as f64 * time_seconds).ceil() as usize
+    let last = [BPMChange {
+        time_point: end,
+        bpm: bpm_changes[final_bpm_change].bpm,
+    }];
+
+    let bpm_changes = (first.iter())
+        .chain(&bpm_changes[prefirst_bpm_change + 1..=final_bpm_change])
+        .chain(&last);
+
+    let bpm_changes = bpm_changes.clone().zip(bpm_changes.skip(1));
+
+    let time_seconds = bpm_changes.fold(0.0, |acc, (bpm_change1, bpm_change2)| {
+        acc + f64::from(bpm_change2.time_point - bpm_change1.time_point) * 60.0 / bpm_change1.bpm
+            * 4.0
+    });
+
+    Ok(((sample_rate as usize * num_channels as usize) as f64 * time_seconds).ceil() as usize)
 }
+
+pub fn get_bpm_section_t(bpm_changes: &[BPMChange], t: f64) -> TimePoint {
+    let t = t.clamp(0.0, 1.0);
+
+    let bpm_changes = bpm_changes.iter().zip(bpm_changes.iter().skip(1));
+
+    let seconds = bpm_changes
+        .clone()
+        .map(|v| f64::from(v.1.time_point - v.0.time_point) * v.0.bpm * 4.0)
+        .collect::<Vec<_>>();
+
+    let sum = seconds.iter().sum::<f64>();
+
+    TimePoint {
+        measure: todo!(),
+        submeasure: todo!(),
+    }
+}
+
+#[path = "audio_tests.rs"]
+#[cfg(test)]
+mod tests;
