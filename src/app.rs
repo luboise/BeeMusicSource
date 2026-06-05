@@ -327,8 +327,6 @@ impl eframe::App for JonnahSlicer<'_> {
                     )
                     .unwrap();
 
-                    dbg!(self.display_start);
-
                     match event {
                         Some(StemEvent::PlayAudio(sample_clicked))
                             if let Some(audio) = &stem.audio =>
@@ -529,11 +527,98 @@ fn draw_stem(
         ((mouse_pos.unwrap_or_default().x - x1) / (x2 - x1)).clamp(0.0, 1.0)
     };
 
+    if let Some(audio) = &live_stem.audio {
+        let num_samples = end_sample - start_sample;
+        let starting_sample = start_time.samples_from_start(audio.sample_rate(), bpm_changes)?;
+
+        // TODO: Move this somewhere else?
+        let visual_density = 6000;
+
+        let waveform_stroke =
+            egui::Stroke::new(1.5, egui::Color32::from_gray(190).linear_multiply(0.7));
+
+        audio.draw_channel(
+            0,
+            Some(visual_density),
+            starting_sample,
+            num_samples,
+            &rect,
+            &painter,
+            waveform_stroke,
+        );
+    }
+
     let slices = live_stem.stem.slices.iter().filter_map(|slice| {
         (start_time..=end_time)
             .contains(&slice.time_point)
             .then_some(slice.clone())
     });
+
+    let measure_stroke = egui::Stroke::new(2.0, egui::Color32::DARK_BLUE.linear_multiply(0.7));
+    for i in start_time.measure..end_time.measure {
+        let measure_sample_index = calculate_num_samples(
+            Default::default(),
+            crate::audio::TimePoint {
+                measure: i,
+                submeasure: 0.0,
+            },
+            SAMPLE_RATE,
+            NUM_CHANNELS,
+            bpm_changes,
+        )?;
+
+        if measure_sample_index < start_sample || end_sample < measure_sample_index {
+            continue;
+        }
+
+        let ratio = (measure_sample_index - start_sample) as f64 / (visual_samples) as f64;
+
+        let tx = rect.min.x + (ratio as f32) * (rect.max.x - rect.min.x);
+
+        let points = [
+            egui::Pos2 {
+                x: tx,
+                y: rect.min.y,
+            },
+            egui::Pos2 {
+                x: tx,
+                y: rect.max.y,
+            },
+        ];
+
+        painter.line_segment(points, measure_stroke);
+    }
+
+    let bpm_change_stroke = egui::Stroke::new(6.0, egui::Color32::RED.linear_multiply(0.7));
+    for bpm_change in bpm_changes {
+        let sample = calculate_num_samples(
+            Default::default(),
+            bpm_change.time_point,
+            SAMPLE_RATE,
+            NUM_CHANNELS,
+            bpm_changes,
+        )?;
+
+        if sample < start_sample || end_sample < sample {
+            continue;
+        }
+
+        let ratio = (sample - start_sample) as f64 / (visual_samples) as f64;
+        let tx = rect.min.x + (ratio as f32) * (rect.max.x - rect.min.x);
+
+        let points = [
+            egui::Pos2 {
+                x: tx,
+                y: rect.min.y,
+            },
+            egui::Pos2 {
+                x: tx,
+                y: rect.max.y,
+            },
+        ];
+
+        painter.line_segment(points, bpm_change_stroke);
+    }
 
     for slice in slices {
         let sample = calculate_num_samples(
@@ -566,41 +651,6 @@ fn draw_stem(
         painter.line_segment(points, stroke);
     }
 
-    for i in start_time.measure..end_time.measure {
-        let measure_sample_index = calculate_num_samples(
-            Default::default(),
-            crate::audio::TimePoint {
-                measure: i,
-                submeasure: 0.0,
-            },
-            SAMPLE_RATE,
-            NUM_CHANNELS,
-            bpm_changes,
-        )?;
-
-        if measure_sample_index < start_sample || end_sample < measure_sample_index {
-            continue;
-        }
-
-        let ratio = (measure_sample_index - start_sample) as f64 / (visual_samples) as f64;
-
-        let tx = rect.min.x + (ratio as f32) * (rect.max.x - rect.min.x);
-
-        let points = [
-            egui::Pos2 {
-                x: tx,
-                y: rect.min.y,
-            },
-            egui::Pos2 {
-                x: tx,
-                y: rect.max.y,
-            },
-        ];
-
-        let measure_stroke = egui::Stroke::new(2.0, egui::Color32::DARK_BLUE.linear_multiply(0.7));
-        painter.line_segment(points, measure_stroke);
-    }
-
     let mut event = None;
 
     if let Some(mouse_pos) = &mouse_pos
@@ -627,32 +677,6 @@ fn draw_stem(
         } else if rmb_down {
             event = Some(StemEvent::RightClick(sample_clicked));
         }
-    }
-
-    if let Some(audio) = &live_stem.audio {
-        let num_channels = audio.num_channels();
-
-        let display_length = (end_time - start_time).ceil();
-
-        let num_samples = end_sample - start_sample;
-
-        let starting_sample = start_time.samples_from_start(audio.sample_rate(), bpm_changes)?;
-
-        // TODO: Move this somewhere else?
-        let visual_density = 6000;
-
-        let waveform_stroke =
-            egui::Stroke::new(1.5, egui::Color32::from_gray(190).linear_multiply(0.7));
-
-        audio.draw_channel(
-            0,
-            Some(visual_density),
-            starting_sample,
-            num_samples,
-            &rect,
-            &painter,
-            waveform_stroke,
-        );
     }
 
     Ok((rect, event))
