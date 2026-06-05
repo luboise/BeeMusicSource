@@ -7,17 +7,19 @@ fn assert_close(a: f64, b: f64) {
 }
 
 #[test]
-fn mono_sample_index_test() {
+fn mono_sample_index_test() -> Result<(), Box<dyn std::error::Error>> {
     let bpm_changes = vec![BPMChange {
         time_point: TimePoint::new(0, 0.0),
         bpm: 160.0,
     }];
 
     let tp = TimePoint::new(0, 0.0);
-    assert_eq!(0, tp.mono_sample_index(44100, &bpm_changes));
+    assert_eq!(0, tp.samples_from_start(44100, &bpm_changes)?);
 
     let tp = TimePoint::new(1, 0.0);
-    assert_eq!(66_150, tp.mono_sample_index(44100, &bpm_changes));
+    assert_eq!(66_150, tp.samples_from_start(44100, &bpm_changes)?);
+
+    Ok(())
 }
 
 #[test]
@@ -70,15 +72,13 @@ fn neg_test() {
 }
 
 #[test]
-fn quantise_1_4() {
-    assert_close(
-        1.0,
-        f64::from(TimePoint::new(1, 0.1).quantised(Snapping::Beat(4))),
-    );
-
-    assert_close(
-        1.25,
-        f64::from(TimePoint::new(1, 0.15).quantised(Snapping::Beat(4))),
+fn quantise_1_2() {
+    assert_eq!(
+        f64::from(TimePoint::new(0, 0.6).quantised(Snapping::Measure(2))),
+        f64::from(TimePoint {
+            measure: 0,
+            submeasure: 0.5,
+        }),
     );
 }
 
@@ -86,16 +86,66 @@ fn quantise_1_4() {
 fn quantise_1_3() {
     assert_close(
         1.0,
-        f64::from(TimePoint::new(1, 0.03).quantised(Snapping::Beat(3))),
+        f64::from(TimePoint::new(1, 0.03).quantised(Snapping::Measure(3))),
     );
 
     assert_close(
         1.33333,
-        f64::from(TimePoint::new(1, 0.3).quantised(Snapping::Beat(3))),
+        f64::from(TimePoint::new(1, 0.3).quantised(Snapping::Measure(3))),
     );
 
     assert_close(
         1.33333,
-        f64::from(TimePoint::new(1, 0.4).quantised(Snapping::Beat(3))),
+        f64::from(TimePoint::new(1, 0.4).quantised(Snapping::Measure(3))),
     );
+}
+
+#[test]
+fn quantise_1_4() {
+    assert_close(
+        1.0,
+        f64::from(TimePoint::new(1, 0.1).quantised(Snapping::Measure(4))),
+    );
+    assert_close(
+        1.0,
+        f64::from(TimePoint::new(1, 0.1).quantised(Snapping::Beat(1))),
+    );
+
+    assert_close(
+        1.25,
+        f64::from(TimePoint::new(1, 0.15).quantised(Snapping::Measure(4))),
+    );
+    assert_close(
+        1.25,
+        f64::from(TimePoint::new(1, 0.15).quantised(Snapping::Beat(1))),
+    );
+}
+
+#[test]
+fn from_time() -> Result<(), Box<dyn std::error::Error>> {
+    let bpm_changes = [
+        BPMChange {
+            time_point: TimePoint {
+                measure: 0,
+                submeasure: 0.0,
+            },
+            bpm: 120.0,
+        },
+        BPMChange {
+            time_point: TimePoint {
+                measure: 1,
+                submeasure: 0.0,
+            },
+            bpm: 60.0,
+        },
+    ];
+
+    // 2 seconds for first measure (120 bpm * 4 beats = 60 / 120 * 4 = 2)
+    // 4 seconds for measures thereafter (60 bpm * 4 beats = 60 / 60 * 4 = 4)
+    // 10 seconds = 2 seconds (120bpm) + 2 * 4 seconds (60bpm)
+    let time_point = TimePoint::from_time(10.0, &bpm_changes)?;
+
+    assert_eq!(f64::from(time_point.quantised(Snapping::Measure(1))), 3.0);
+
+    Ok(())
 }

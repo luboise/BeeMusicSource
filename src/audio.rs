@@ -1,3 +1,6 @@
+// TODO: Make this part of BPMChange to support other time signatures
+pub const BEATS_PER_MEASURE: usize = 4;
+
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub enum Snapping {
     Measure(u16),
@@ -7,7 +10,7 @@ pub enum Snapping {
 impl Snapping {
     pub fn simplify(self) -> Self {
         match self {
-            Self::Measure(m) => Self::Beat(m * 4),
+            Self::Measure(m) => Self::Beat(m * BEATS_PER_MEASURE as u16),
             Self::Beat(b) => Self::Beat(b),
         }
     }
@@ -15,7 +18,7 @@ impl Snapping {
     pub fn as_measure_denom(self) -> u16 {
         match self {
             Self::Measure(m) => m,
-            Self::Beat(b) => b * 4,
+            Self::Beat(b) => b * BEATS_PER_MEASURE as u16,
         }
     }
 }
@@ -30,6 +33,162 @@ impl Default for Snapping {
 pub struct TimePoint {
     pub measure: i64,
     pub submeasure: f64,
+}
+
+impl TimePoint {
+    pub fn new(measure: i64, submeasure: f64) -> Self {
+        let measure = measure + submeasure.trunc() as i64;
+        let submeasure = submeasure.fract();
+
+        Self {
+            measure,
+            submeasure,
+        }
+        .normalised()
+    }
+
+    pub fn from_sample(
+        sample: usize,
+        sample_rate: i32,
+        bpm_changes: &[BPMChange],
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        Self::from_time(sample as f64 / sample_rate as f64, bpm_changes)
+    }
+
+    pub fn from_time(
+        time: f64,
+        bpm_changes: &[BPMChange],
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let mut lengths = vec![];
+
+        for bpm_change in bpm_changes {
+            lengths.push(
+                lengths.last().copied().unwrap_or(0.0)
+                    + calculate_timepoints_distance(
+                        Default::default(),
+                        bpm_change.time_point,
+                        bpm_changes,
+                    )?,
+            );
+        }
+
+        let (index_l, time_l, time_r) = if let Some((i, (l, r))) = lengths
+            .iter()
+            .zip(lengths.iter().skip(1))
+            .enumerate()
+            .find(|(_, (l, r))| **l <= time && time <= **r)
+        {
+            (i, *l, *r)
+        } else {
+            (
+                lengths.len() - 1,
+                lengths.last().copied().ok_or("bad last")?,
+                time,
+            )
+        };
+
+        // If we are not past the final time point
+        if index_l < lengths.len() - 1 {
+            let ratio = (time - time_l) / (time_r - time_l);
+
+            let l = &bpm_changes[index_l];
+            let r = &bpm_changes[index_l + 1];
+
+            Ok(l.time_point.ratio(&r.time_point, ratio))
+        } else {
+            let l = &bpm_changes[index_l];
+
+            let diff = time_r - time_l;
+            let measure_length = 60.0 * BEATS_PER_MEASURE as f64 / l.bpm;
+
+            Ok(l.time_point + Self::from(lengths[index_l - 1] + diff / measure_length))
+        }
+    }
+
+    pub fn clamped_to_zero(self) -> Self {
+        if self.measure < 0 {
+            Self::default()
+        } else {
+            self
+        }
+    }
+
+    pub fn ratio(&self, other: &Self, ratio: impl Into<f64>) -> Self {
+        let start = f64::from(*self);
+        let end = f64::from(*other);
+
+        Self::from(start + ratio.into() * (end - start))
+    }
+
+    pub fn get_ratio(&self, end: &Self, t: &Self) -> f64 {
+        let start = f64::from(*self);
+        let end = f64::from(*end);
+        let t = f64::from(*t);
+
+        (t - start) / (end - start)
+    }
+
+    pub fn ceil(&self) -> i64 {
+        self.measure + self.submeasure.ceil() as i64
+    }
+
+    pub fn seconds_from_start(
+        &self,
+        bpm_changes: &[BPMChange],
+    ) -> Result<f64, Box<dyn std::error::Error>> {
+        calculate_timepoints_distance(
+            TimePoint {
+                measure: 0,
+                submeasure: 0.0,
+            },
+            *self,
+            bpm_changes,
+        )
+    }
+
+    /// Get the sample index of a time point within a given channel.
+    pub fn samples_from_start(
+        &self,
+        channel_sample_rate: i32,
+        bpm_changes: &[BPMChange],
+    ) -> Result<usize, Box<dyn std::error::Error>> {
+        let seconds = self.seconds_from_start(bpm_changes)?;
+
+        Ok((seconds * channel_sample_rate as f64) as usize)
+    }
+
+    pub fn normalise(&mut self) {
+        while self.submeasure < 0.0 {
+            self.measure -= 1;
+            self.submeasure += 1.0;
+        }
+
+        while self.submeasure > 1.0 {
+            self.measure += 1;
+            self.submeasure -= 1.0;
+        }
+    }
+
+    pub fn normalised(&self) -> Self {
+        let mut ret = *self;
+        ret.normalise();
+        ret
+    }
+
+    pub fn quantise(&mut self, snapping: Snapping) {
+        let beat_denom = match snapping {
+            Snapping::Measure(v) => f64::from(v),
+            Snapping::Beat(v) => f64::from(v) * BEATS_PER_MEASURE as f64,
+        };
+
+        let num_divisions = f64::from(*self) * beat_denom;
+        *self = (num_divisions.round() / beat_denom).into();
+    }
+
+    pub fn quantised(mut self, snapping: Snapping) -> Self {
+        self.quantise(snapping);
+        self
+    }
 }
 
 impl PartialOrd for TimePoint {
@@ -73,101 +232,6 @@ impl From<f64> for TimePoint {
             measure: value.trunc() as i64,
             submeasure: value.fract(),
         }
-    }
-}
-
-impl TimePoint {
-    pub fn new(measure: i64, submeasure: f64) -> Self {
-        let measure = measure + submeasure.trunc() as i64;
-        let submeasure = submeasure.fract();
-
-        Self {
-            measure,
-            submeasure,
-        }
-        .normalised()
-    }
-
-    pub fn clamped_to_zero(self) -> Self {
-        if self.measure < 0 {
-            Self::default()
-        } else {
-            self
-        }
-    }
-
-    pub fn ratio(&self, other: &Self, ratio: impl Into<f64>) -> Self {
-        let start = f64::from(*self);
-        let end = f64::from(*other);
-
-        Self::from(start + ratio.into() * (end - start))
-    }
-
-    pub fn get_ratio(&self, end: &Self, t: &Self) -> f64 {
-        let start = f64::from(*self);
-        let end = f64::from(*end);
-        let t = f64::from(*t);
-
-        (t - start) / (end - start)
-    }
-
-    pub fn ceil(&self) -> i64 {
-        self.measure + self.submeasure.ceil() as i64
-    }
-
-    /// Get the sample index of a time point within a given channel.
-    pub fn mono_sample_index(&self, channel_sample_rate: i32, bpm_changes: &[BPMChange]) -> usize {
-        let measure = f64::from(*self);
-        // TODO: Fix this to be BPM change dependent for other time signatures
-        let beats_per_measure = 4.0;
-        let beat_length = 60.0 / bpm_changes.first().expect("Fix this at some point").bpm;
-
-        // TODO: Get this of this unwrap, or make this return a result
-        calculate_num_samples_all_channels(
-            TimePoint {
-                measure: 0,
-                submeasure: 0.0,
-            },
-            *self,
-            channel_sample_rate,
-            1,
-            bpm_changes,
-        )
-        .unwrap()
-    }
-
-    pub fn normalise(&mut self) {
-        while self.submeasure < 0.0 {
-            self.measure -= 1;
-            self.submeasure += 1.0;
-        }
-
-        while self.submeasure > 1.0 {
-            self.measure += 1;
-            self.submeasure -= 1.0;
-        }
-    }
-
-    pub fn normalised(&self) -> Self {
-        let mut ret = *self;
-        ret.normalise();
-        ret
-    }
-
-    pub fn quantise(&mut self, snapping: Snapping) {
-        let beat_denom = match snapping {
-            Snapping::Measure(v) => f64::from(v) / 4.0,
-            Snapping::Beat(v) => f64::from(v),
-        };
-
-        let num_divisions = f64::from(*self) * beat_denom;
-
-        *self = (num_divisions.round() / beat_denom).into();
-    }
-
-    pub fn quantised(mut self, snapping: Snapping) -> Self {
-        self.quantise(snapping);
-        self
     }
 }
 
@@ -331,17 +395,11 @@ impl AudioFile {
     }
 }
 
-pub fn calculate_num_samples_all_channels(
+pub fn calculate_timepoints_distance(
     start: TimePoint,
     end: TimePoint,
-    sample_rate: i32,
-    num_channels: u16,
     bpm_changes: &[BPMChange],
-) -> Result<usize, Box<dyn std::error::Error>> {
-    let diff = end - start;
-
-    let num_beats = 4.0 * (diff.measure as f64 + diff.submeasure);
-
+) -> Result<f64, Box<dyn std::error::Error>> {
     let prefirst_bpm_change = bpm_changes
         .iter()
         .position(|bpm_change| bpm_change.time_point <= start)
@@ -368,30 +426,23 @@ pub fn calculate_num_samples_all_channels(
 
     let bpm_changes = bpm_changes.clone().zip(bpm_changes.skip(1));
 
-    let time_seconds = bpm_changes.fold(0.0, |acc, (bpm_change1, bpm_change2)| {
+    Ok(bpm_changes.fold(0.0, |acc, (bpm_change1, bpm_change2)| {
         acc + f64::from(bpm_change2.time_point - bpm_change1.time_point) * 60.0 / bpm_change1.bpm
-            * 4.0
-    });
-
-    Ok(((sample_rate as usize * num_channels as usize) as f64 * time_seconds).ceil() as usize)
+            * BEATS_PER_MEASURE as f64
+    }))
 }
 
-pub fn get_bpm_section_t(bpm_changes: &[BPMChange], t: f64) -> TimePoint {
-    let t = t.clamp(0.0, 1.0);
+pub fn calculate_num_samples(
+    start: TimePoint,
+    end: TimePoint,
+    sample_rate: i32,
+    num_channels: u16,
+    bpm_changes: &[BPMChange],
+) -> Result<usize, Box<dyn std::error::Error>> {
+    let num_seconds = calculate_timepoints_distance(start, end, bpm_changes)?;
+    let samples_per_second = sample_rate as usize * num_channels as usize;
 
-    let bpm_changes = bpm_changes.iter().zip(bpm_changes.iter().skip(1));
-
-    let seconds = bpm_changes
-        .clone()
-        .map(|v| f64::from(v.1.time_point - v.0.time_point) * v.0.bpm * 4.0)
-        .collect::<Vec<_>>();
-
-    let sum = seconds.iter().sum::<f64>();
-
-    TimePoint {
-        measure: todo!(),
-        submeasure: todo!(),
-    }
+    Ok((samples_per_second as f64 * num_seconds).ceil() as usize)
 }
 
 #[path = "audio_tests.rs"]

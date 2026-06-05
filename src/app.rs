@@ -1,4 +1,4 @@
-use crate::audio::calculate_num_samples_all_channels;
+use crate::audio::calculate_num_samples;
 
 #[derive(Default, Debug)]
 enum ProjectStatus {
@@ -336,7 +336,7 @@ impl eframe::App for JonnahSlicer<'_> {
                             // If there is a slice before our cursor
                             if let Some((first_slice_index, first_slice)) =
                                 stem.stem.slices.iter().enumerate().rfind(|(_, slice)| {
-                                    let Ok(v) = calculate_num_samples_all_channels(
+                                    let Ok(v) = calculate_num_samples(
                                         Default::default(),
                                         slice.time_point,
                                         44100,
@@ -354,16 +354,18 @@ impl eframe::App for JonnahSlicer<'_> {
                                 let start = first_slice.time_point;
                                 let end = second_slice.time_point;
 
-                                println!("playing from {start:?} to {end:?}");
-
-                                let start_sample_index = start.mono_sample_index(
-                                    audio.sample_rate(),
-                                    &self.project.bpm_changes,
-                                );
-                                let end_sample_index = end.mono_sample_index(
-                                    audio.sample_rate(),
-                                    &self.project.bpm_changes,
-                                );
+                                let start_sample_index = start
+                                    .samples_from_start(
+                                        audio.sample_rate(),
+                                        &self.project.bpm_changes,
+                                    )
+                                    .unwrap_or(0);
+                                let end_sample_index = end
+                                    .samples_from_start(
+                                        audio.sample_rate(),
+                                        &self.project.bpm_changes,
+                                    )
+                                    .unwrap_or(0);
 
                                 // TODO: Put make this pre-trim it before fetching the channels?
                                 let channels = stem
@@ -390,24 +392,38 @@ impl eframe::App for JonnahSlicer<'_> {
                             }
                         }
                         Some(StemEvent::LeftClick(sample_clicked)) => {
-                            // TODO: Turn sample clicked back into timepoint
+                            let Ok(time_point) = crate::audio::TimePoint::from_sample(
+                                sample_clicked,
+                                44100,
+                                &self.project.bpm_changes,
+                            ) else {
+                                eprintln!("failed to get time point from sample {sample_clicked}");
+                                continue;
+                            };
 
-                            // stem.stem.slices.push(crate::project::Slice {
-                            //     time_point: sample_clicked.quantised(self.slice_snapping),
-                            // });
+                            stem.stem.slices.push(crate::project::Slice {
+                                time_point: time_point.quantised(self.slice_snapping),
+                            });
                         }
 
-                        Some(StemEvent::RightClick(time_point)) => {
-                            // TODO: Turn sample clicked back into timepoint
+                        Some(StemEvent::RightClick(sample_clicked)) => {
+                            let Ok(time_point) = crate::audio::TimePoint::from_sample(
+                                sample_clicked,
+                                44100,
+                                &self.project.bpm_changes,
+                            ) else {
+                                eprintln!("failed to get time point from sample {sample_clicked}");
+                                continue;
+                            };
 
-                            // stem.stem.slices.dedup_by_key(|v| v.time_point);
-                            // stem.stem.slices.sort_by_key(|v| v.time_point);
-                            //
-                            // const DELETE_DISTANCE: f64 = 0.15;
-                            //
-                            // stem.stem.slices.retain(|slice| {
-                            //     f64::from(slice.time_point - time_point).abs() > DELETE_DISTANCE
-                            // });
+                            stem.stem.slices.dedup_by_key(|v| v.time_point);
+                            stem.stem.slices.sort_by_key(|v| v.time_point);
+
+                            const DELETE_DISTANCE: f64 = 0.15;
+
+                            stem.stem.slices.retain(|slice| {
+                                f64::from(slice.time_point - time_point).abs() > DELETE_DISTANCE
+                            });
                         }
                         Some(StemEvent::PlayAudio(_)) | None => (),
                     }
@@ -481,7 +497,7 @@ fn draw_stem(
     const SAMPLE_RATE: i32 = 44100;
     const NUM_CHANNELS: u16 = 1;
 
-    let start_sample = calculate_num_samples_all_channels(
+    let start_sample = calculate_num_samples(
         crate::audio::TimePoint::default(),
         start_time,
         SAMPLE_RATE,
@@ -489,7 +505,7 @@ fn draw_stem(
         bpm_changes,
     )?;
 
-    let end_sample = calculate_num_samples_all_channels(
+    let end_sample = calculate_num_samples(
         crate::audio::TimePoint::default(),
         end_time,
         SAMPLE_RATE,
@@ -518,7 +534,7 @@ fn draw_stem(
     });
 
     for slice in slices {
-        let sample = calculate_num_samples_all_channels(
+        let sample = calculate_num_samples(
             Default::default(),
             slice.time_point,
             SAMPLE_RATE,
@@ -549,7 +565,7 @@ fn draw_stem(
     }
 
     for i in start_time.measure..end_time.measure {
-        let measure_sample_index = calculate_num_samples_all_channels(
+        let measure_sample_index = calculate_num_samples(
             Default::default(),
             crate::audio::TimePoint {
                 measure: i,
@@ -603,7 +619,7 @@ fn draw_stem(
 
         let display_length = (end_time - start_time).ceil();
 
-        let num_samples = crate::audio::calculate_num_samples_all_channels(
+        let num_samples = crate::audio::calculate_num_samples(
             start_time,
             end_time,
             audio.sample_rate(),
@@ -611,7 +627,7 @@ fn draw_stem(
             bpm_changes,
         )?;
 
-        let starting_sample = start_time.mono_sample_index(audio.sample_rate(), bpm_changes);
+        let starting_sample = start_time.samples_from_start(audio.sample_rate(), bpm_changes)?;
 
         // TODO: Move this somewhere else?
         let visual_density = 6000;
