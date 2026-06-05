@@ -1,3 +1,5 @@
+use crate::audio::calculate_num_samples_all_channels;
+
 #[derive(Default, Debug)]
 enum ProjectStatus {
     #[default]
@@ -322,7 +324,8 @@ impl eframe::App for JonnahSlicer<'_> {
                         ui,
                         self.display_start,
                         end_time_point,
-                    );
+                    )
+                    .unwrap();
 
                     match event {
                         Some(StemEvent::PlayAudio(time_point)) if let Some(audio) = &stem.audio => {
@@ -340,6 +343,8 @@ impl eframe::App for JonnahSlicer<'_> {
                             {
                                 let start = first_slice.time_point;
                                 let end = second_slice.time_point;
+
+                                println!("playing from {start:?} to {end:?}");
 
                                 let start_sample_index = start.mono_sample_index(
                                     audio.sample_rate(),
@@ -441,9 +446,9 @@ fn draw_stem(
     bpm_changes: &[crate::audio::BPMChange],
     ctx: &egui::Context,
     ui: &mut egui::Ui,
-    display_start: crate::audio::TimePoint,
-    end: crate::audio::TimePoint,
-) -> (egui::Rect, Option<StemEvent>) {
+    start_time: crate::audio::TimePoint,
+    end_time: crate::audio::TimePoint,
+) -> Result<(egui::Rect, Option<StemEvent>), Box<dyn std::error::Error>> {
     const RECT_HEIGHT: f32 = 200.0;
 
     let (mouse_pos, lmb_down, rmb_down) = ctx.input(|i| {
@@ -458,6 +463,33 @@ fn draw_stem(
         egui::Vec2::new(ui.available_width(), RECT_HEIGHT),
         egui::Sense::click(),
     );
+
+    const SAMPLE_RATE: i32 = 44100;
+    const NUM_CHANNELS: u16 = 1;
+
+    let start_sample = calculate_num_samples_all_channels(
+        crate::audio::TimePoint::default(),
+        start_time,
+        SAMPLE_RATE,
+        NUM_CHANNELS,
+        bpm_changes,
+    )?;
+
+    let end_sample = calculate_num_samples_all_channels(
+        crate::audio::TimePoint::default(),
+        end_time,
+        SAMPLE_RATE,
+        NUM_CHANNELS,
+        bpm_changes,
+    )?;
+
+    let visual_samples = end_sample - start_sample;
+
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(rect, 0.0, egui::Color32::from_gray(35));
+
+    let stroke = egui::Stroke::new(3.0, egui::Color32::WHITE);
+
     let mouse_x_ratio = {
         let x1 = rect.min.x;
         let x2 = rect.max.x;
@@ -465,24 +497,26 @@ fn draw_stem(
         ((mouse_pos.unwrap_or_default().x - x1) / (x2 - x1)).clamp(0.0, 1.0)
     };
 
-    let stroke = egui::Stroke::new(3.0, egui::Color32::WHITE);
+    let slices = live_stem.stem.slices.iter().filter_map(|slice| {
+        (start_time..=end_time)
+            .contains(&slice.time_point)
+            .then_some(slice.clone())
+    });
 
-    let painter = ui.painter_at(rect);
+    for slice in slices {
+        let sample = calculate_num_samples_all_channels(
+            Default::default(),
+            slice.time_point,
+            SAMPLE_RATE,
+            NUM_CHANNELS,
+            bpm_changes,
+        )?;
 
-    let slices = live_stem
-        .stem
-        .slices
-        .iter()
-        .filter_map(|slice| {
-            (display_start..=end)
-                .contains(&slice.time_point)
-                .then_some(slice.clone())
-        })
-        .collect::<Vec<_>>();
+        if sample < start_sample || end_sample < sample {
+            break;
+        }
 
-    painter.rect_filled(rect, 0.0, egui::Color32::from_gray(35));
-    for slice in &slices {
-        let ratio = display_start.get_ratio(&end, &slice.time_point);
+        let ratio = (sample - start_sample) as f64 / (visual_samples) as f64;
 
         let tx = rect.min.x + (ratio as f32) * (rect.max.x - rect.min.x);
 
@@ -498,27 +532,41 @@ fn draw_stem(
         ];
 
         painter.line_segment(points, stroke);
+    }
 
-        for i in display_start.measure..end.measure {
-            let ratio = display_start.get_ratio(&end, &crate::audio::TimePoint::new(i, 0.0));
+    for i in start_time.measure..end_time.measure {
+        let measure_sample_index = calculate_num_samples_all_channels(
+            Default::default(),
+            crate::audio::TimePoint {
+                measure: i,
+                submeasure: 0.0,
+            },
+            SAMPLE_RATE,
+            NUM_CHANNELS,
+            bpm_changes,
+        )?;
 
-            let tx = rect.min.x + (ratio as f32) * (rect.max.x - rect.min.x);
-
-            let points = [
-                egui::Pos2 {
-                    x: tx,
-                    y: rect.min.y,
-                },
-                egui::Pos2 {
-                    x: tx,
-                    y: rect.max.y,
-                },
-            ];
-
-            let measure_stroke =
-                egui::Stroke::new(2.0, egui::Color32::DARK_BLUE.linear_multiply(0.7));
-            painter.line_segment(points, measure_stroke);
+        if measure_sample_index < start_sample || end_sample < measure_sample_index {
+            continue;
         }
+
+        let ratio = (measure_sample_index - start_sample) as f64 / (visual_samples) as f64;
+
+        let tx = rect.min.x + (ratio as f32) * (rect.max.x - rect.min.x);
+
+        let points = [
+            egui::Pos2 {
+                x: tx,
+                y: rect.min.y,
+            },
+            egui::Pos2 {
+                x: tx,
+                y: rect.max.y,
+            },
+        ];
+
+        let measure_stroke = egui::Stroke::new(2.0, egui::Color32::DARK_BLUE.linear_multiply(0.7));
+        painter.line_segment(points, measure_stroke);
     }
 
     let mut event = None;
@@ -526,7 +574,7 @@ fn draw_stem(
     if let Some(mouse_pos) = &mouse_pos
         && rect.contains(*mouse_pos)
     {
-        let click_point = display_start.ratio(&end, mouse_x_ratio);
+        let click_point = start_time.ratio(&end_time, mouse_x_ratio);
 
         if lmb_down {
             event = Some(StemEvent::LeftClick(click_point));
@@ -538,18 +586,17 @@ fn draw_stem(
     if let Some(audio) = &live_stem.audio {
         let num_channels = audio.num_channels();
 
-        let display_length = (end - display_start).ceil();
+        let display_length = (end_time - start_time).ceil();
 
         let num_samples = crate::audio::calculate_num_samples_all_channels(
-            display_start,
-            end,
+            start_time,
+            end_time,
             audio.sample_rate(),
             num_channels,
             bpm_changes,
-        )
-        .unwrap();
+        )?;
 
-        let starting_sample = display_start.mono_sample_index(audio.sample_rate(), bpm_changes);
+        let starting_sample = start_time.mono_sample_index(audio.sample_rate(), bpm_changes);
 
         // TODO: Move this somewhere else?
         let visual_density = 6000;
@@ -569,10 +616,10 @@ fn draw_stem(
 
         if response.middle_clicked() || ui.input(|input| input.key_pressed(egui::Key::G)) {
             event = Some(StemEvent::PlayAudio(
-                display_start.ratio(&end, mouse_x_ratio),
+                start_time.ratio(&end_time, mouse_x_ratio),
             ));
         }
     }
 
-    (rect, event)
+    Ok((rect, event))
 }
