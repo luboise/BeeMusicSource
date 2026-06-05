@@ -328,16 +328,26 @@ impl eframe::App for JonnahSlicer<'_> {
                     .unwrap();
 
                     match event {
-                        Some(StemEvent::PlayAudio(time_point)) if let Some(audio) = &stem.audio => {
+                        Some(StemEvent::PlayAudio(sample_clicked))
+                            if let Some(audio) = &stem.audio =>
+                        {
                             stem.stem.slices.sort_by_key(|v| v.time_point);
 
                             // If there is a slice before our cursor
-                            if let Some((first_slice_index, first_slice)) = stem
-                                .stem
-                                .slices
-                                .iter()
-                                .enumerate()
-                                .rfind(|(_, slice)| slice.time_point < time_point)
+                            if let Some((first_slice_index, first_slice)) =
+                                stem.stem.slices.iter().enumerate().rfind(|(_, slice)| {
+                                    let Ok(v) = calculate_num_samples_all_channels(
+                                        Default::default(),
+                                        slice.time_point,
+                                        44100,
+                                        1,
+                                        &self.project.bpm_changes,
+                                    ) else {
+                                        return false;
+                                    };
+
+                                    v < sample_clicked
+                                })
                                 && let Some(second_slice) =
                                     stem.stem.slices.get(first_slice_index + 1)
                             {
@@ -379,21 +389,25 @@ impl eframe::App for JonnahSlicer<'_> {
                                 self.audio_player.as_ref().unwrap().add_audio(playback);
                             }
                         }
-                        Some(StemEvent::LeftClick(time_point)) => {
-                            stem.stem.slices.push(crate::project::Slice {
-                                time_point: time_point.quantised(self.slice_snapping),
-                            });
+                        Some(StemEvent::LeftClick(sample_clicked)) => {
+                            // TODO: Turn sample clicked back into timepoint
+
+                            // stem.stem.slices.push(crate::project::Slice {
+                            //     time_point: sample_clicked.quantised(self.slice_snapping),
+                            // });
                         }
 
                         Some(StemEvent::RightClick(time_point)) => {
-                            stem.stem.slices.dedup_by_key(|v| v.time_point);
-                            stem.stem.slices.sort_by_key(|v| v.time_point);
+                            // TODO: Turn sample clicked back into timepoint
 
-                            const DELETE_DISTANCE: f64 = 0.15;
-
-                            stem.stem.slices.retain(|slice| {
-                                f64::from(slice.time_point - time_point).abs() > DELETE_DISTANCE
-                            });
+                            // stem.stem.slices.dedup_by_key(|v| v.time_point);
+                            // stem.stem.slices.sort_by_key(|v| v.time_point);
+                            //
+                            // const DELETE_DISTANCE: f64 = 0.15;
+                            //
+                            // stem.stem.slices.retain(|slice| {
+                            //     f64::from(slice.time_point - time_point).abs() > DELETE_DISTANCE
+                            // });
                         }
                         Some(StemEvent::PlayAudio(_)) | None => (),
                     }
@@ -435,9 +449,9 @@ fn powered_by_egui_and_eframe(ui: &mut egui::Ui) {
 }
 
 enum StemEvent {
-    LeftClick(crate::audio::TimePoint),
-    RightClick(crate::audio::TimePoint),
-    PlayAudio(crate::audio::TimePoint),
+    LeftClick(usize),
+    RightClick(usize),
+    PlayAudio(usize),
 }
 
 #[must_use]
@@ -574,12 +588,13 @@ fn draw_stem(
     if let Some(mouse_pos) = &mouse_pos
         && rect.contains(*mouse_pos)
     {
-        let click_point = start_time.ratio(&end_time, mouse_x_ratio);
+        let sample_clicked =
+            (start_sample as f64 + mouse_x_ratio as f64 * visual_samples as f64).round() as usize;
 
         if lmb_down {
-            event = Some(StemEvent::LeftClick(click_point));
+            event = Some(StemEvent::LeftClick(sample_clicked));
         } else if rmb_down {
-            event = Some(StemEvent::RightClick(click_point));
+            event = Some(StemEvent::RightClick(sample_clicked));
         }
     }
 
@@ -615,9 +630,11 @@ fn draw_stem(
         );
 
         if response.middle_clicked() || ui.input(|input| input.key_pressed(egui::Key::G)) {
-            event = Some(StemEvent::PlayAudio(
-                start_time.ratio(&end_time, mouse_x_ratio),
-            ));
+            let sample_clicked = (start_sample as f64
+                + mouse_x_ratio as f64 * visual_samples as f64)
+                .round() as usize;
+
+            event = Some(StemEvent::PlayAudio(sample_clicked));
         }
     }
 
