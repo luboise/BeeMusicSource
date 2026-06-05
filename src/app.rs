@@ -327,6 +327,8 @@ impl eframe::App for JonnahSlicer<'_> {
                     )
                     .unwrap();
 
+                    dbg!(self.display_start);
+
                     match event {
                         Some(StemEvent::PlayAudio(sample_clicked))
                             if let Some(audio) = &stem.audio =>
@@ -607,6 +609,19 @@ fn draw_stem(
         let sample_clicked =
             (start_sample as f64 + mouse_x_ratio as f64 * visual_samples as f64).round() as usize;
 
+        if response.middle_clicked() || ui.input(|input| input.key_pressed(egui::Key::G)) {
+            let sample_clicked = (start_sample as f64
+                + mouse_x_ratio as f64 * visual_samples as f64)
+                .round() as usize;
+
+            // println!(
+            //     "({:?}) rect {rect} contains mouse {mouse_pos:?}",
+            //     live_stem as *const LiveStem
+            // );
+
+            event = Some(StemEvent::PlayAudio(sample_clicked));
+        }
+
         if lmb_down {
             event = Some(StemEvent::LeftClick(sample_clicked));
         } else if rmb_down {
@@ -619,13 +634,7 @@ fn draw_stem(
 
         let display_length = (end_time - start_time).ceil();
 
-        let num_samples = crate::audio::calculate_num_samples(
-            start_time,
-            end_time,
-            audio.sample_rate(),
-            num_channels,
-            bpm_changes,
-        )?;
+        let num_samples = end_sample - start_sample;
 
         let starting_sample = start_time.samples_from_start(audio.sample_rate(), bpm_changes)?;
 
@@ -639,19 +648,11 @@ fn draw_stem(
             0,
             Some(visual_density),
             starting_sample,
-            num_samples / usize::from(num_channels),
+            num_samples,
             &rect,
             &painter,
             waveform_stroke,
         );
-
-        if response.middle_clicked() || ui.input(|input| input.key_pressed(egui::Key::G)) {
-            let sample_clicked = (start_sample as f64
-                + mouse_x_ratio as f64 * visual_samples as f64)
-                .round() as usize;
-
-            event = Some(StemEvent::PlayAudio(sample_clicked));
-        }
     }
 
     Ok((rect, event))

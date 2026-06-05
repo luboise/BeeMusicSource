@@ -62,14 +62,11 @@ impl TimePoint {
         let mut lengths = vec![];
 
         for bpm_change in bpm_changes {
-            lengths.push(
-                lengths.last().copied().unwrap_or(0.0)
-                    + calculate_timepoints_distance(
-                        Default::default(),
-                        bpm_change.time_point,
-                        bpm_changes,
-                    )?,
-            );
+            lengths.push(calculate_timepoints_distance(
+                Default::default(),
+                bpm_change.time_point,
+                bpm_changes,
+            )?);
         }
 
         let (index_l, time_l, time_r) = if let Some((i, (l, r))) = lengths

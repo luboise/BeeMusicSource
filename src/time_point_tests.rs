@@ -149,3 +149,114 @@ fn from_time() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
+
+#[test]
+fn from_time_210_205() -> Result<(), Box<dyn std::error::Error>> {}
+
+const LOVES_ME_NOT_BPM_CHANGES: [BPMChange; 15] = [
+    BPMChange {
+        time_point: TimePoint {
+            measure: 0,
+            submeasure: 0.0,
+        },
+        bpm: 210.0,
+    },
+    BPMChange {
+        time_point: TimePoint {
+            measure: 20,
+            submeasure: 0.0,
+        },
+        bpm: 205.0,
+    },
+    BPMChange {
+        time_point: TimePoint {
+            measure: 20,
+            submeasure: 0.5,
+        },
+        bpm: 200.0,
+    },
+    BPMChange {
+        time_point: TimePoint {
+            measure: 21,
+            submeasure: 0.0,
+        },
+        bpm: 195.0,
+    },
+    BPMChange {
+        time_point: TimePoint {
+            measure: 21,
+            submeasure: 0.5,
+        },
+        bpm: 190.0,
+    },
+    BPMChange {
+        time_point: TimePoint {
+            measure: 22,
+            submeasure: 0.0,
+        },
+        bpm: 185.0,
+    },
+    BPMChange {
+        time_point: TimePoint {
+            measure: 22,
+            submeasure: 0.5,
+        },
+        bpm: 180.0,
+    },
+    BPMChange {
+        time_point: TimePoint {
+            measure: 23,
+            submeasure: 0.0,
+        },
+        bpm: 175.0,
+    },
+    BPMChange {
+        time_point: TimePoint {
+            measure: 24,
+            submeasure: 0.0,
+        },
+        bpm: 180.0,
+    },
+    BPMChange {
+        time_point: TimePoint {
+            measure: 47,
+            submeasure: 0.25,
+        },
+        bpm: 185.0,
+    },
+    BPMChange {
+        time_point: TimePoint {
+            measure: 47,
+            submeasure: 0.50,
+        },
+        bpm: 190.0,
+    },
+    BPMChange {
+        time_point: TimePoint {
+            measure: 47,
+            submeasure: 0.75,
+        },
+        bpm: 195.0,
+    },
+    BPMChange {
+        time_point: TimePoint {
+            measure: 48,
+            submeasure: 0.0,
+        },
+        bpm: 200.0,
+    },
+    BPMChange {
+        time_point: TimePoint {
+            measure: 54,
+            submeasure: 0.0,
+        },
+        bpm: 205.0,
+    },
+    BPMChange {
+        time_point: TimePoint {
+            measure: 56,
+            submeasure: 0.0,
+        },
+        bpm: 210.0,
+    },
+];
