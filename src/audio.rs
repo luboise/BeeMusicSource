@@ -56,9 +56,20 @@ impl TimePoint {
     }
 
     pub fn from_time(
-        time: f64,
+        time_seconds: f64,
         bpm_changes: &[BPMChange],
     ) -> Result<Self, Box<dyn std::error::Error>> {
+        if bpm_changes.is_empty() {
+            return Err("no bpm changes".into());
+        }
+
+        if bpm_changes.len() == 1 {
+            let beat_length = 60.0 / bpm_changes[0].bpm;
+            let num_measures = time_seconds / beat_length / BEATS_PER_MEASURE as f64;
+
+            return Ok(num_measures.into());
+        }
+
         let mut lengths = vec![];
 
         for bpm_change in bpm_changes {
@@ -73,20 +84,20 @@ impl TimePoint {
             .iter()
             .zip(lengths.iter().skip(1))
             .enumerate()
-            .find(|(_, (l, r))| **l <= time && time <= **r)
+            .find(|(_, (l, r))| **l <= time_seconds && time_seconds <= **r)
         {
             (i, *l, *r)
         } else {
             (
                 lengths.len() - 1,
                 lengths.last().copied().ok_or("bad last")?,
-                time,
+                time_seconds,
             )
         };
 
         // If we are not past the final time point
         if index_l < lengths.len() - 1 {
-            let ratio = (time - time_l) / (time_r - time_l);
+            let ratio = (time_seconds - time_l) / (time_r - time_l);
 
             let l = &bpm_changes[index_l];
             let r = &bpm_changes[index_l + 1];

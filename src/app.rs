@@ -146,13 +146,12 @@ impl eframe::App for JonnahSlicer<'_> {
 
     /// Called each time the UI needs repainting, which may be many times per second.
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        if self.project_path.is_some() {
+        if let Some(project_path) = &self.project_path {
             match &self.project_status {
                 ProjectStatus::None => {
-                    self.project =
-                        crate::project::load_project(self.project_path.as_ref().unwrap())
-                            .and_then(|project| project.try_into())
-                            .unwrap_or_default();
+                    self.project = crate::project::load_project(project_path)
+                        .and_then(|project| project.try_into())
+                        .unwrap_or_default();
 
                     self.project_status = ProjectStatus::Loaded;
                 }
@@ -160,7 +159,6 @@ impl eframe::App for JonnahSlicer<'_> {
                 ProjectStatus::Loaded => (),
             }
         }
-
         if ctx.input_mut(|ui| {
             ui.consume_shortcut(&egui::KeyboardShortcut::new(
                 egui::Modifiers::CTRL,
@@ -186,28 +184,64 @@ impl eframe::App for JonnahSlicer<'_> {
             egui::Panel::left("File Hover Preview").show(ctx, |ui| {
                 if !hovered.is_empty() {
                     for path in hovered.into_iter().filter_map(|file| file.path) {
-                        ui.label(path.display().to_string());
+                        let hovered_file = path.display().to_string();
                     }
                 }
             });
         }
 
+        let mut midis = vec![];
+
         for dropped_file in dropped {
             if let Some(path) = dropped_file.path {
                 let parent_dir = std::env::current_dir();
 
-                let audio_path = parent_dir
+                let file_path = parent_dir
                     .ok()
                     .and_then(|parent| pathdiff::diff_paths(&path, parent))
                     .unwrap_or_else(|| path.canonicalize().unwrap_or(path));
 
-                self.project.stems.push(LiveStem {
-                    stem: crate::project::Stem {
-                        audio_path,
-                        slices: vec![],
-                    },
-                    audio: None,
-                });
+                let Some(extension) = file_path.extension() else {
+                    eprintln!(
+                        "file {} has no extension. skipping this file",
+                        file_path.display()
+                    );
+                    continue;
+                };
+
+                if extension == "wav" {
+                    self.project.stems.push(LiveStem {
+                        stem: crate::project::Stem {
+                            audio_path: file_path,
+                            slices: vec![],
+                        },
+                        audio: None,
+                    });
+                } else if extension == "mid" || extension == "midi" {
+                    let Ok(bytes) = std::fs::read(&file_path) else {
+                        eprintln!("failed to read file {}", file_path.display());
+                        continue;
+                    };
+
+                    let use_ableton_midi = true;
+
+                    let bpm_changes = if use_ableton_midi {
+                        // ableton midi clips are at 120bpm and ignore bpm changes afaik
+                        &[crate::audio::BPMChange {
+                            time_point: crate::audio::TimePoint::default(),
+                            bpm: 120.0,
+                        }]
+                    } else {
+                        self.project.bpm_changes.as_slice()
+                    };
+
+                    let Ok(midi) = crate::slices_from_midi(&bytes, bpm_changes) else {
+                        eprintln!("failed to parse midi file {}", file_path.display());
+                        continue;
+                    };
+
+                    midis.extend(midi);
+                }
             }
         }
 
@@ -227,7 +261,7 @@ impl eframe::App for JonnahSlicer<'_> {
         let scroll_delta = ctx.input(|i| i.smooth_scroll_delta);
         let home_pressed = ctx.input(|i| i.key_pressed(egui::Key::Home));
 
-        const SCROLL_SENSITIVITY: f64 = 0.3;
+        const SCROLL_SENSITIVITY: f64 = 0.1;
         if scroll_delta.y != 0.0 {
             self.display_start = (self.display_start
                 + crate::audio::TimePoint::new(0, -scroll_delta.y as f64 * SCROLL_SENSITIVITY))
@@ -238,7 +272,7 @@ impl eframe::App for JonnahSlicer<'_> {
             self.display_start = Default::default();
         }
 
-        egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
+        egui::Panel::top("top_panel").show(ctx, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
                 // NOTE: no File->Quit on web pages!
                 let is_web = cfg!(target_arch = "wasm32");
@@ -328,6 +362,12 @@ impl eframe::App for JonnahSlicer<'_> {
                     .unwrap();
 
                     match event {
+                        Some(StemEvent::Hovering) => {
+                            for slice in std::mem::take(&mut midis) {
+                                // TODO: Make this faster?
+                                stem.stem.slices.push(slice);
+                            }
+                        }
                         Some(StemEvent::PlayAudio(sample_clicked))
                             if let Some(audio) = &stem.audio =>
                         {
@@ -465,6 +505,7 @@ fn powered_by_egui_and_eframe(ui: &mut egui::Ui) {
 }
 
 enum StemEvent {
+    Hovering,
     LeftClick(usize),
     RightClick(usize),
     PlayAudio(usize),
@@ -656,6 +697,9 @@ fn draw_stem(
     if let Some(mouse_pos) = &mouse_pos
         && rect.contains(*mouse_pos)
     {
+        // default to hovering if no other event is met
+        event = Some(StemEvent::Hovering);
+
         let sample_clicked =
             (start_sample as f64 + mouse_x_ratio as f64 * visual_samples as f64).round() as usize;
 
@@ -663,11 +707,6 @@ fn draw_stem(
             let sample_clicked = (start_sample as f64
                 + mouse_x_ratio as f64 * visual_samples as f64)
                 .round() as usize;
-
-            // println!(
-            //     "({:?}) rect {rect} contains mouse {mouse_pos:?}",
-            //     live_stem as *const LiveStem
-            // );
 
             event = Some(StemEvent::PlayAudio(sample_clicked));
         }

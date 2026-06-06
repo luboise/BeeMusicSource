@@ -150,9 +150,6 @@ fn from_time() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-#[test]
-fn from_time_210_205() -> Result<(), Box<dyn std::error::Error>> {}
-
 const LOVES_ME_NOT_BPM_CHANGES: [BPMChange; 15] = [
     BPMChange {
         time_point: TimePoint {
