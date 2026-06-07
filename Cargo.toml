@@ -34,6 +34,7 @@ midi-reader-writer = { version = "0.1.3", features = [
   "read",
   "engine-midly-0-5",
 ] }
+base62 = "2.2.4"
 
 # native:
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

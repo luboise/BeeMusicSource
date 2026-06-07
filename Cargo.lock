@@ -276,6 +276,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "base62"
+version = "2.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cd637ac531c60eb7fbc4684dc061c2d7d90d73d758181aa02eeff0464b9eee4b"
+
+[[package]]
 name = "bit-set"
 version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1688,6 +1694,7 @@ dependencies = [
 name = "jonnah-slicer"
 version = "0.1.0"
 dependencies = [
+ "base62",
  "clap",
  "cpal",
  "eframe",

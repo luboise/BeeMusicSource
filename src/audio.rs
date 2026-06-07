@@ -354,6 +354,122 @@ impl AudioFile {
         vecs
     }
 
+    pub fn cuts_from_slices(
+        &self,
+        slices: &[crate::project::Slice],
+        bpm_changes: &[BPMChange],
+    ) -> Result<Vec<&[f32]>, Box<dyn std::error::Error>> {
+        let sample_counts = std::iter::once(&crate::project::Slice {
+            time_point: Default::default(),
+        })
+        .chain(slices.iter())
+        .map(|slice| {
+            calculate_num_samples(Default::default(), slice.time_point, 44100, 1, bpm_changes)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+        let starting_sample = calculate_num_samples(
+            Default::default(),
+            slices.first().ok_or("no slice 0")?.time_point,
+            44100,
+            1,
+            bpm_changes,
+        )?;
+
+        let sample_counts = sample_counts
+            .clone()
+            .into_iter()
+            .zip(sample_counts.into_iter().skip(1))
+            .map(|(l, r)| r - l)
+            .collect::<Vec<_>>();
+
+        self.cuts_from_samples(starting_sample, &sample_counts)
+    }
+
+    pub fn cuts_from_samples(
+        &self,
+        starting_sample: usize,
+        frame_counts: &[usize],
+    ) -> Result<Vec<&[f32]>, Box<dyn std::error::Error>> {
+        let mut cuts = vec![];
+
+        let mut num_samples = 0usize;
+
+        let samples_slice = self.samples.iter().as_slice();
+
+        if starting_sample >= samples_slice.len() {
+            return Err(format!("starting sample {starting_sample} out of range").into());
+        }
+
+        let samples_slice = &samples_slice[starting_sample..];
+
+        for (i, num_frames) in frame_counts.iter().enumerate() {
+            let num_to_read = num_frames * usize::from(self.num_channels());
+            let Ok(cut) = samples_slice
+                .get(num_samples..num_samples + num_to_read)
+                .ok_or_else(|| {
+                    format!(
+                        "unable to get samples[{num_samples}..{}] ({} available)",
+                        num_samples + num_to_read,
+                        samples_slice.len()
+                    )
+                })
+            else {
+                eprintln!(
+                    "not enough samples to fulfill all slices, dropped {}",
+                    frame_counts.len() - i
+                );
+                break;
+            };
+
+            num_samples += num_to_read;
+
+            if cut.len() < *num_frames {
+                return Err(format!(
+                    "less frames ({}) than expected {num_frames} ({} available)",
+                    cut.len(),
+                    samples_slice.len()
+                )
+                .into());
+            }
+
+            cuts.push(cut);
+        }
+
+        Ok(cuts)
+    }
+
+    pub fn export_slices(
+        &self,
+        export_dir: impl AsRef<std::path::Path>,
+        slices: &[crate::project::Slice],
+        bpm_changes: &[BPMChange],
+        file_name_fn: Option<impl Fn(usize) -> String>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let cuts = self.cuts_from_slices(slices, bpm_changes)?;
+
+        let export_dir = export_dir.as_ref();
+
+        if !export_dir.exists() {
+            std::fs::create_dir_all(export_dir)?;
+        }
+
+        for (i, cut) in cuts.into_iter().enumerate() {
+            let file_stem = file_name_fn
+                .as_ref()
+                .map(|f| f(i))
+                .unwrap_or(format!("{i:0>2}"));
+
+            let file_name = file_stem + ".wav";
+
+            if let Err(e) = wavers::write(export_dir.join(&file_name), cut, 44100, 2) {
+                return Err(format!("failed to export stem {}: {e}", file_name).into());
+            }
+        }
+
+        Ok(())
+    }
+
     pub fn draw_channel(
         &self,
         channel_index: u16,

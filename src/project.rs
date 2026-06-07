@@ -8,6 +8,7 @@ pub struct Slice {
 pub struct Stem {
     pub audio_path: std::path::PathBuf,
     pub slices: Vec<Slice>,
+    pub starting_keysound: Option<u64>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Default)]
