@@ -31,7 +31,7 @@ impl AudioPlayer {
                 };
 
                 if (*min..=*max).contains(&BUFFER_SIZE_PER_CHANNEL) {
-                    output_config.try_with_sample_rate(44100)
+                    output_config.try_with_sample_rate(crate::app::SAMPLE_RATE.cast_unsigned())
                 } else {
                     None
                 }

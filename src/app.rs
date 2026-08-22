@@ -1,6 +1,7 @@
 use crate::audio::calculate_num_samples;
 
 pub const STEM_HEIGHT: f32 = 200.0;
+pub const SAMPLE_RATE: i32 = 44100;
 
 #[derive(Default, Debug)]
 enum ProjectStatus {
@@ -98,7 +99,7 @@ impl Default for JonnahSlicer<'_> {
             jonnah_image: None,
             display_start: crate::audio::TimePoint::default(),
             slice_snapping: crate::audio::Snapping::default(),
-            audio_player: crate::audio_player::AudioPlayer::new().ok(),
+            audio_player: Some(crate::audio_player::AudioPlayer::new().unwrap()),
             project_path: None,
             drag_and_drop: egui::DragAndDrop::default(),
             project_status: Default::default(),
@@ -457,7 +458,7 @@ impl eframe::App for JonnahSlicer<'_> {
                                             let Ok(v) = calculate_num_samples(
                                                 Default::default(),
                                                 slice.time_point,
-                                                44100,
+                                                SAMPLE_RATE,
                                                 1,
                                                 &self.project.bpm_changes,
                                             ) else {
@@ -512,7 +513,7 @@ impl eframe::App for JonnahSlicer<'_> {
                                 Some(StemEvent::LeftClick(sample_clicked)) => {
                                     let Ok(time_point) = crate::audio::TimePoint::from_sample(
                                         sample_clicked,
-                                        44100,
+                                        SAMPLE_RATE,
                                         &self.project.bpm_changes,
                                     ) else {
                                         eprintln!(
@@ -529,7 +530,7 @@ impl eframe::App for JonnahSlicer<'_> {
                                 Some(StemEvent::RightClick(sample_clicked)) => {
                                     let Ok(time_point) = crate::audio::TimePoint::from_sample(
                                         sample_clicked,
-                                        44100,
+                                        crate::app::SAMPLE_RATE,
                                         &self.project.bpm_changes,
                                     ) else {
                                         eprintln!(
@@ -596,7 +597,6 @@ enum StemEvent {
     PlayAudio(usize),
 }
 
-#[must_use]
 fn draw_stem(
     live_stem: &LiveStem,
     bpm_changes: &[crate::audio::BPMChange],
@@ -618,7 +618,6 @@ fn draw_stem(
         egui::Sense::click(),
     );
 
-    const SAMPLE_RATE: i32 = 44100;
     const NUM_CHANNELS: u16 = 1;
 
     let start_sample = calculate_num_samples(

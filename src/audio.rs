@@ -364,14 +364,20 @@ impl AudioFile {
         })
         .chain(slices.iter())
         .map(|slice| {
-            calculate_num_samples(Default::default(), slice.time_point, 44100, 1, bpm_changes)
+            calculate_num_samples(
+                Default::default(),
+                slice.time_point,
+                crate::app::SAMPLE_RATE,
+                1,
+                bpm_changes,
+            )
         })
         .collect::<Result<Vec<_>, _>>()?;
 
         let starting_sample = calculate_num_samples(
             Default::default(),
             slices.first().ok_or("no slice 0")?.time_point,
-            44100,
+            crate::app::SAMPLE_RATE,
             1,
             bpm_changes,
         )?;
@@ -462,7 +468,9 @@ impl AudioFile {
 
             let file_name = file_stem + ".wav";
 
-            if let Err(e) = wavers::write(export_dir.join(&file_name), cut, 44100, 2) {
+            if let Err(e) =
+                wavers::write(export_dir.join(&file_name), cut, crate::app::SAMPLE_RATE, 2)
+            {
                 return Err(format!("failed to export stem {}: {e}", file_name).into());
             }
         }
