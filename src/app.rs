@@ -28,6 +28,7 @@ pub struct JonnahSlicer<'a> {
     slice_snapping: crate::audio::Snapping,
 
     zoom_level: f32,
+    audio_volume: f32,
 
     #[serde(skip)]
     project_status: ProjectStatus,
@@ -112,6 +113,7 @@ impl Default for JonnahSlicer<'_> {
             // Example stuff:
             project: LiveProject::default(),
             visual_density: 6000,
+            audio_volume: 1.0,
             zoom_level: 1.0,
             jonnah_image: None,
             display_start: crate::audio::TimePoint::default(),
@@ -146,7 +148,7 @@ impl JonnahSlicer<'_> {
 
         // Load previous app state (if any).
         // Note that you must enable the `persistence` feature for this to work.
-        if let Some(storage) = cc.storage {
+        let mut app = if let Some(storage) = cc.storage {
             let mut x: JonnahSlicer<'_> =
                 eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();
 
@@ -157,7 +159,13 @@ impl JonnahSlicer<'_> {
             x
         } else {
             Default::default()
-        }
+        };
+
+        app.audio_player = crate::audio_player::AudioPlayer::new(app.project.sample_rate).ok();
+        app.audio_player.as_ref().inspect(|player| {
+            player.set_volume(app.audio_volume);
+        });
+        app
     }
 
     // TODO: Document errors that this function can return
@@ -186,6 +194,13 @@ impl eframe::App for JonnahSlicer<'_> {
                     self.project = crate::project::load_project(project_path)
                         .and_then(|project| project.try_into())
                         .unwrap_or_default();
+
+                    if self.audio_player.is_some() {
+                        let new_audio_player =
+                            crate::audio_player::AudioPlayer::new(self.project.sample_rate).ok();
+                        self.audio_player =
+                            new_audio_player.inspect(|player| player.set_volume(self.audio_volume));
+                    }
 
                     self.project_status = ProjectStatus::Loaded;
                 }
@@ -378,7 +393,7 @@ impl eframe::App for JonnahSlicer<'_> {
                         )
                         .changed()
                     {
-                        self.audio_player =
+                        let new_audio_player =
                             match crate::audio_player::AudioPlayer::new(self.project.sample_rate) {
                                 Ok(audio_player) => {
                                     println!(
@@ -394,7 +409,25 @@ impl eframe::App for JonnahSlicer<'_> {
                                     );
                                     None
                                 }
-                            }
+                            };
+
+                        self.audio_player =
+                            new_audio_player.inspect(|player| player.set_volume(self.audio_volume));
+                    }
+
+                    ui.add_space(100.0);
+
+                    if let Some(audio_player) = &mut self.audio_player {
+                        if ui
+                            .add(
+                                egui::Slider::new(&mut self.audio_volume, 0.0..=1.0).text("Volume"),
+                            )
+                            .changed()
+                        {
+                            audio_player.set_volume(self.audio_volume);
+                        }
+                    } else {
+                        ui.colored_label(egui::Color32::RED, "audio player not initialised");
                     }
                 });
             });

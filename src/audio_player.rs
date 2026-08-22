@@ -7,6 +7,7 @@ pub struct AudioPlayer {
     output_streams: Vec<cpal::platform::Stream>,
     config: cpal::StreamConfig,
     audio_files: std::sync::Arc<std::sync::Mutex<Vec<AudioPlayback>>>,
+    volume: std::sync::Arc<std::sync::RwLock<f32>>,
 }
 
 impl AudioPlayer {
@@ -53,6 +54,8 @@ impl AudioPlayer {
                 .ok_or("no suitable device")?
         };
 
+        let volume = std::sync::Arc::new(std::sync::RwLock::new(1.0));
+
         let mut player = Self {
             host,
             device: default_device,
@@ -60,6 +63,7 @@ impl AudioPlayer {
             output_streams: vec![],
             config: config.clone(),
             audio_files: Default::default(),
+            volume: volume.clone(),
         };
 
         let audio_files_clone = player.audio_files.clone();
@@ -97,6 +101,15 @@ impl AudioPlayer {
 
                         true
                     });
+
+                    let Ok(volume) = volume.read().map(|v| *v) else {
+                        eprintln!("failed to fetch audio player volume");
+                        return;
+                    };
+
+                    for sample in data.iter_mut() {
+                        *sample *= volume;
+                    }
                 },
                 move |err| {
                     eprintln!("{err}");
@@ -142,6 +155,14 @@ impl AudioPlayer {
         for stream in &self.output_streams {
             stream.play().unwrap();
         }
+    }
+
+    pub fn volume(&self) -> f32 {
+        *self.volume.read().expect("failed to get volume")
+    }
+
+    pub fn set_volume(&self, volume: f32) {
+        *self.volume.write().expect("failed to write volume") = volume;
     }
 
     pub fn sample_rate(&self) -> crate::project::SampleRate {
