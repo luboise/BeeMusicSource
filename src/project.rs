@@ -11,8 +11,38 @@ pub struct Stem {
     pub starting_keysound: Option<u64>,
 }
 
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
+#[serde(transparent)]
+pub struct SampleRate(pub i32);
+
+impl egui::emath::Numeric for SampleRate {
+    const INTEGRAL: bool = true;
+
+    const MIN: Self = Self(0);
+
+    const MAX: Self = Self(192_000);
+
+    fn to_f64(self) -> f64 {
+        self.0.into()
+    }
+
+    fn from_f64(num: f64) -> Self {
+        Self(num.trunc() as i32)
+    }
+}
+
+impl Default for SampleRate {
+    fn default() -> Self {
+        Self(44100)
+    }
+}
+
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Default)]
 pub struct Project {
+    #[serde(default)]
+    pub sample_rate: SampleRate,
     pub stems: Vec<Stem>,
     pub bpm_changes: Vec<crate::audio::BPMChange>,
 }

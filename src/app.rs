@@ -1,3 +1,5 @@
+use egui::emath::Numeric;
+
 use crate::audio::calculate_num_samples;
 
 pub const STEM_HEIGHT: f32 = 200.0;
@@ -53,6 +55,7 @@ impl From<crate::project::Stem> for LiveStem {
 
 #[derive(Debug)]
 pub struct LiveProject {
+    sample_rate: crate::project::SampleRate,
     stems: Vec<LiveStem>,
     bpm_changes: Vec<crate::audio::BPMChange>,
 }
@@ -61,18 +64,24 @@ impl std::convert::TryFrom<crate::project::Project> for LiveProject {
     type Error = Box<dyn std::error::Error>;
 
     fn try_from(project: crate::project::Project) -> Result<Self, Self::Error> {
+        let crate::project::Project{ sample_rate, stems, bpm_changes } = project;
+
         Ok(Self {
-            stems: project.stems.into_iter().map(|v| v.into()).collect(),
-            bpm_changes: project.bpm_changes,
+            sample_rate,
+            stems: stems.into_iter().map(|v| v.into()).collect(),
+            bpm_changes
         })
     }
 }
 
 impl LiveProject {
     pub fn as_project(&self) -> crate::project::Project {
+        let Self { sample_rate, stems, bpm_changes } = self;
+ 
         crate::project::Project {
-            stems: self.stems.iter().map(|stem| stem.stem.clone()).collect(),
-            bpm_changes: self.bpm_changes.clone(),
+            sample_rate: *sample_rate,
+            stems: stems.iter().map(|stem| stem.stem.clone()).collect(),
+            bpm_changes: bpm_changes.clone()
         }
     }
 }
@@ -80,6 +89,7 @@ impl LiveProject {
 impl Default for LiveProject {
     fn default() -> Self {
         Self {
+            sample_rate: Default::default(),
             stems: Default::default(),
             bpm_changes: vec![crate::audio::BPMChange {
                 time_point: crate::audio::TimePoint::default(),
@@ -99,7 +109,9 @@ impl Default for JonnahSlicer<'_> {
             jonnah_image: None,
             display_start: crate::audio::TimePoint::default(),
             slice_snapping: crate::audio::Snapping::default(),
-            audio_player: Some(crate::audio_player::AudioPlayer::new().unwrap()),
+            audio_player: Some(
+                crate::audio_player::AudioPlayer::new().expect("failed to start audio player"),
+            ),
             project_path: None,
             drag_and_drop: egui::DragAndDrop::default(),
             project_status: Default::default(),
@@ -331,10 +343,15 @@ impl eframe::App for JonnahSlicer<'_> {
                 jonnah.paint_at(ui, ui.content_rect());
             }
 
-            // The central panel the region left after adding TopPanel's and SidePanel's
-            ui.heading(format!("JonnahSlicer v{}", env!("CARGO_PKG_VERSION")));
+            ui.vertical(|ui| {
+                ui.heading(format!("JonnahSlicer v{}", env!("CARGO_PKG_VERSION")));
 
-            ui.add(egui::Slider::new(&mut self.zoom_level, 0.0..=8.0).text("Zoom"));
+                ui.horizontal(|ui| {
+                    // The central panel the region left after adding TopPanel's and SidePanel's
+                    ui.add(egui::Slider::new(&mut self.zoom_level, 0.0..=8.0).text("Zoom"));
+                    ui.add(egui::Slider::new(&mut self.project.sample_rate, crate::project::SampleRate::MIN..=crate::project::SampleRate::MAX).text("Sample Rate"));
+                });
+            });
 
             ui.separator();
 
