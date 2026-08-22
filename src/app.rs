@@ -195,7 +195,7 @@ impl eframe::App for JonnahSlicer<'_> {
         }
         if ctx.input_mut(|ui| {
             ui.consume_shortcut(&egui::KeyboardShortcut::new(
-                egui::Modifiers::CTRL,
+                egui::Modifiers::COMMAND,
                 egui::Key::S,
             ))
         }) {
