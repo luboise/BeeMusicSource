@@ -7,7 +7,7 @@ fn half_bpm_120_to_60() -> Result<(), Box<dyn std::error::Error>> {
     let x = calculate_num_samples(
         TimePoint::from(3.5),
         TimePoint::from(5.5),
-        44100,
+        crate::project::SampleRate(44100),
         NUM_CHANNELS,
         &[
             BPMChange {

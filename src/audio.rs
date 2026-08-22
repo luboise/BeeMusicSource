@@ -314,6 +314,7 @@ pub struct BPMChange {
 
 #[derive(Debug)]
 pub struct AudioFile {
+    sample_rate: crate::project::SampleRate,
     wav: wavers::Wav<f32>,
     samples: wavers::Samples<f32>,
 }
@@ -321,7 +322,11 @@ pub struct AudioFile {
 impl AudioFile {
     pub fn new(mut wav: wavers::Wav<f32>) -> Result<Self, wavers::WaversError> {
         let samples = wav.read()?;
-        Ok(Self { wav, samples })
+        Ok(Self {
+            sample_rate: crate::project::SampleRate(wav.sample_rate()),
+            wav,
+            samples,
+        })
     }
 
     pub fn sample_rate(&self) -> i32 {
@@ -367,7 +372,7 @@ impl AudioFile {
             calculate_num_samples(
                 Default::default(),
                 slice.time_point,
-                crate::app::SAMPLE_RATE,
+                self.sample_rate,
                 1,
                 bpm_changes,
             )
@@ -377,7 +382,7 @@ impl AudioFile {
         let starting_sample = calculate_num_samples(
             Default::default(),
             slices.first().ok_or("no slice 0")?.time_point,
-            crate::app::SAMPLE_RATE,
+            self.sample_rate,
             1,
             bpm_changes,
         )?;
@@ -468,9 +473,7 @@ impl AudioFile {
 
             let file_name = file_stem + ".wav";
 
-            if let Err(e) =
-                wavers::write(export_dir.join(&file_name), cut, crate::app::SAMPLE_RATE, 2)
-            {
+            if let Err(e) = wavers::write(export_dir.join(&file_name), cut, self.sample_rate(), 2) {
                 return Err(format!("failed to export stem {}: {e}", file_name).into());
             }
         }
@@ -567,12 +570,12 @@ pub fn calculate_timepoints_distance(
 pub fn calculate_num_samples(
     start: TimePoint,
     end: TimePoint,
-    sample_rate: i32,
+    sample_rate: crate::project::SampleRate,
     num_channels: u16,
     bpm_changes: &[BPMChange],
 ) -> Result<usize, Box<dyn std::error::Error>> {
     let num_seconds = calculate_timepoints_distance(start, end, bpm_changes)?;
-    let samples_per_second = sample_rate as usize * num_channels as usize;
+    let samples_per_second = sample_rate.0 as usize * num_channels as usize;
 
     Ok((samples_per_second as f64 * num_seconds).ceil() as usize)
 }

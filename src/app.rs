@@ -3,7 +3,6 @@ use egui::emath::Numeric;
 use crate::audio::calculate_num_samples;
 
 pub const STEM_HEIGHT: f32 = 200.0;
-pub const SAMPLE_RATE: i32 = 44100;
 
 #[derive(Default, Debug)]
 enum ProjectStatus {
@@ -64,24 +63,32 @@ impl std::convert::TryFrom<crate::project::Project> for LiveProject {
     type Error = Box<dyn std::error::Error>;
 
     fn try_from(project: crate::project::Project) -> Result<Self, Self::Error> {
-        let crate::project::Project{ sample_rate, stems, bpm_changes } = project;
+        let crate::project::Project {
+            sample_rate,
+            stems,
+            bpm_changes,
+        } = project;
 
         Ok(Self {
             sample_rate,
             stems: stems.into_iter().map(|v| v.into()).collect(),
-            bpm_changes
+            bpm_changes,
         })
     }
 }
 
 impl LiveProject {
     pub fn as_project(&self) -> crate::project::Project {
-        let Self { sample_rate, stems, bpm_changes } = self;
- 
+        let Self {
+            sample_rate,
+            stems,
+            bpm_changes,
+        } = self;
+
         crate::project::Project {
             sample_rate: *sample_rate,
             stems: stems.iter().map(|stem| stem.stem.clone()).collect(),
-            bpm_changes: bpm_changes.clone()
+            bpm_changes: bpm_changes.clone(),
         }
     }
 }
@@ -109,9 +116,21 @@ impl Default for JonnahSlicer<'_> {
             jonnah_image: None,
             display_start: crate::audio::TimePoint::default(),
             slice_snapping: crate::audio::Snapping::default(),
-            audio_player: Some(
-                crate::audio_player::AudioPlayer::new().expect("failed to start audio player"),
-            ),
+            audio_player: match crate::audio_player::AudioPlayer::new(
+                crate::project::SampleRate::default(),
+            ) {
+                Ok(v) => {
+                    println!(
+                        "initialised audio player @ {}hz",
+                        crate::project::SampleRate::default().0,
+                    );
+                    Some(v)
+                }
+                Err(e) => {
+                    eprintln!("failed to initialise audio engine: {e}");
+                    None
+                }
+            },
             project_path: None,
             drag_and_drop: egui::DragAndDrop::default(),
             project_status: Default::default(),
@@ -349,7 +368,34 @@ impl eframe::App for JonnahSlicer<'_> {
                 ui.horizontal(|ui| {
                     // The central panel the region left after adding TopPanel's and SidePanel's
                     ui.add(egui::Slider::new(&mut self.zoom_level, 0.0..=8.0).text("Zoom"));
-                    ui.add(egui::Slider::new(&mut self.project.sample_rate, crate::project::SampleRate::MIN..=crate::project::SampleRate::MAX).text("Sample Rate"));
+                    if ui
+                        .add(
+                            egui::Slider::new(
+                                &mut self.project.sample_rate,
+                                crate::project::SampleRate::MIN..=crate::project::SampleRate::MAX,
+                            )
+                            .text("Sample Rate"),
+                        )
+                        .changed()
+                    {
+                        self.audio_player =
+                            match crate::audio_player::AudioPlayer::new(self.project.sample_rate) {
+                                Ok(audio_player) => {
+                                    println!(
+                                        "updated audio player sample rate to {}",
+                                        self.project.sample_rate.0
+                                    );
+                                    Some(audio_player)
+                                }
+                                Err(e) => {
+                                    eprintln!(
+                                        "failed to set audio player sample rate to {}: {e}",
+                                        self.project.sample_rate.0
+                                    );
+                                    None
+                                }
+                            }
+                    }
                 });
             });
 
@@ -495,7 +541,7 @@ impl eframe::App for JonnahSlicer<'_> {
                                             let Ok(v) = calculate_num_samples(
                                                 Default::default(),
                                                 slice.time_point,
-                                                SAMPLE_RATE,
+                                                self.project.sample_rate,
                                                 1,
                                                 &self.project.bpm_changes,
                                             ) else {
@@ -524,7 +570,7 @@ impl eframe::App for JonnahSlicer<'_> {
                                             .unwrap_or(0);
 
                                         // TODO: Put make this pre-trim it before fetching the channels?
-                                        let channels = stem
+                                        if let Ok(channels) = stem
                                             .audio
                                             .as_ref()
                                             .expect("NO AUDIO IN STEM?")
@@ -533,24 +579,30 @@ impl eframe::App for JonnahSlicer<'_> {
                                             .map(|channel| {
                                                 channel
                                                     .get(start_sample_index..end_sample_index)
-                                                    .expect("bad channel")
-                                                    .to_vec()
+                                                    .map(|v|v.to_vec())
+                                                    .ok_or("bad channel")
                                             })
-                                            .collect::<Vec<_>>();
+                                            .collect::<Result<Vec<_>, _>>()
+                                        {
+                                            let playback = crate::audio_player::AudioPlayback::new(
+                                                // TODO: Make this not clone the channels completely
+                                                channels, None,
+                                            )
+                                            .expect("failed to add audio");
 
-                                        let playback = crate::audio_player::AudioPlayback::new(
-                                            // TODO: Make this not clone the channels completely
-                                            channels, None,
-                                        )
-                                        .expect("failed to add audio");
-
-                                        self.audio_player.as_ref().unwrap().add_audio(playback);
+                                            if let Some(audio_player) = &self.audio_player {
+                                                audio_player.add_audio(playback);
+                                            }
+                                        }
+                                            else {
+                                                eprintln!("bad channel");
+                                            }
                                     }
                                 }
                                 Some(StemEvent::LeftClick(sample_clicked)) => {
                                     let Ok(time_point) = crate::audio::TimePoint::from_sample(
                                         sample_clicked,
-                                        SAMPLE_RATE,
+                                        self.project.sample_rate.0,
                                         &self.project.bpm_changes,
                                     ) else {
                                         eprintln!(
@@ -567,7 +619,7 @@ impl eframe::App for JonnahSlicer<'_> {
                                 Some(StemEvent::RightClick(sample_clicked)) => {
                                     let Ok(time_point) = crate::audio::TimePoint::from_sample(
                                         sample_clicked,
-                                        crate::app::SAMPLE_RATE,
+                                        self.project.sample_rate.0,
                                         &self.project.bpm_changes,
                                     ) else {
                                         eprintln!(
@@ -657,10 +709,16 @@ fn draw_stem(
 
     const NUM_CHANNELS: u16 = 1;
 
+    let sample_rate = live_stem
+        .audio
+        .as_ref()
+        .map(|v| v.sample_rate().into())
+        .unwrap_or_default();
+
     let start_sample = calculate_num_samples(
         crate::audio::TimePoint::default(),
         start_time,
-        SAMPLE_RATE,
+        sample_rate,
         NUM_CHANNELS,
         bpm_changes,
     )?;
@@ -668,7 +726,7 @@ fn draw_stem(
     let end_sample = calculate_num_samples(
         crate::audio::TimePoint::default(),
         end_time,
-        SAMPLE_RATE,
+        sample_rate,
         NUM_CHANNELS,
         bpm_changes,
     )?;
@@ -723,7 +781,7 @@ fn draw_stem(
                 measure: i,
                 submeasure: 0.0,
             },
-            SAMPLE_RATE,
+            sample_rate,
             NUM_CHANNELS,
             bpm_changes,
         )?;
@@ -755,7 +813,7 @@ fn draw_stem(
         let sample = calculate_num_samples(
             Default::default(),
             bpm_change.time_point,
-            SAMPLE_RATE,
+            sample_rate,
             NUM_CHANNELS,
             bpm_changes,
         )?;
@@ -785,7 +843,7 @@ fn draw_stem(
         let sample = calculate_num_samples(
             Default::default(),
             slice.time_point,
-            SAMPLE_RATE,
+            sample_rate,
             NUM_CHANNELS,
             bpm_changes,
         )?;

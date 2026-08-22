@@ -17,6 +17,12 @@ pub struct Stem {
 #[serde(transparent)]
 pub struct SampleRate(pub i32);
 
+impl From<i32> for SampleRate {
+    fn from(value: i32) -> Self {
+        Self(value)
+    }
+}
+
 impl egui::emath::Numeric for SampleRate {
     const INTEGRAL: bool = true;
 

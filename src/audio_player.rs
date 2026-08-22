@@ -3,13 +3,16 @@ use cpal::traits::{DeviceTrait as _, HostTrait as _, StreamTrait as _};
 pub struct AudioPlayer {
     host: cpal::platform::Host,
     device: cpal::platform::Device,
+    sample_rate: crate::project::SampleRate,
     output_streams: Vec<cpal::platform::Stream>,
     config: cpal::StreamConfig,
     audio_files: std::sync::Arc<std::sync::Mutex<Vec<AudioPlayback>>>,
 }
 
 impl AudioPlayer {
-    pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new(
+        sample_rate: crate::project::SampleRate,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         let host = cpal::default_host();
 
         const BUFFER_SIZE_PER_CHANNEL: u32 = 1024;
@@ -31,7 +34,8 @@ impl AudioPlayer {
                 };
 
                 if (*min..=*max).contains(&BUFFER_SIZE_PER_CHANNEL) {
-                    output_config.try_with_sample_rate(crate::app::SAMPLE_RATE.cast_unsigned())
+                    // TODO: rebuild audio player on sample rate change
+                    output_config.try_with_sample_rate(sample_rate.0.cast_unsigned())
                 } else {
                     None
                 }
@@ -42,6 +46,7 @@ impl AudioPlayer {
         let mut player = Self {
             host,
             device,
+            sample_rate,
             output_streams: vec![],
             config: config.clone(),
             audio_files: Default::default(),
@@ -127,6 +132,10 @@ impl AudioPlayer {
         for stream in &self.output_streams {
             stream.play().unwrap();
         }
+    }
+
+    pub fn sample_rate(&self) -> crate::project::SampleRate {
+        self.sample_rate
     }
 }
 
