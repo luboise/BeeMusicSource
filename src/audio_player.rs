@@ -17,35 +17,45 @@ impl AudioPlayer {
 
         const BUFFER_SIZE_PER_CHANNEL: u32 = 1024;
 
-        let device = host
+        let config_for_device = |device: &cpal::Device| {
+            device
+                .supported_output_configs()?
+                .find_map(|output_config| {
+                    if output_config.channels() != 2 {
+                        return None;
+                    }
+
+                    let cpal::SupportedBufferSize::Range { min, max } = output_config.buffer_size()
+                    else {
+                        return None;
+                    };
+
+                    if (*min..=*max).contains(&BUFFER_SIZE_PER_CHANNEL) {
+                        // TODO: rebuild audio player on sample rate change
+                        output_config.try_with_sample_rate(sample_rate.0.cast_unsigned())
+                    } else {
+                        None
+                    }
+                })
+                .map(|v| v.config())
+                .ok_or(cpal::SupportedStreamConfigsError::DeviceNotAvailable)
+        };
+
+        let default_device = host
             .default_output_device()
             .ok_or_else(|| "No audio device available.".to_owned())?;
 
-        let config = device
-            .supported_output_configs()?
-            .find_map(|output_config| {
-                if output_config.channels() != 2 {
-                    return None;
-                }
-
-                let cpal::SupportedBufferSize::Range { min, max } = output_config.buffer_size()
-                else {
-                    return None;
-                };
-
-                if (*min..=*max).contains(&BUFFER_SIZE_PER_CHANNEL) {
-                    // TODO: rebuild audio player on sample rate change
-                    output_config.try_with_sample_rate(sample_rate.0.cast_unsigned())
-                } else {
-                    None
-                }
-            })
-            .ok_or("no supported audio config")?
-            .config();
+        let config = if let Ok(config) = config_for_device(&default_device) {
+            config
+        } else {
+            host.output_devices()?
+                .find_map(|device| config_for_device(&device).ok())
+                .ok_or("no suitable device")?
+        };
 
         let mut player = Self {
             host,
-            device,
+            device: default_device,
             sample_rate,
             output_streams: vec![],
             config: config.clone(),
