@@ -262,18 +262,32 @@ impl eframe::App for JonnahSlicer<'_> {
             }
         });
 
-        let scroll_delta = ctx.input(|i| i.smooth_scroll_delta);
-        let home_pressed = ctx.input(|i| i.key_pressed(egui::Key::Home));
-
-        const SCROLL_SENSITIVITY: f64 = 0.1;
-        if scroll_delta.y != 0.0 {
-            self.display_start = (self.display_start
-                + crate::audio::TimePoint::new(0, -scroll_delta.y as f64 * SCROLL_SENSITIVITY))
-            .clamped_to_zero();
-        }
+        let (scroll_delta, shift_pressed, home_pressed) = ctx.input(|i| {
+            (
+                i.smooth_scroll_delta(),
+                i.modifiers.shift,
+                i.key_pressed(egui::Key::Home),
+            )
+        });
 
         if home_pressed {
             self.display_start = Default::default();
+        }
+
+        if scroll_delta.x != 0.0 || (shift_pressed && scroll_delta.y != 0.0) {
+            const HORIZONTAL_SCROLL_SENSITIVITY: f64 = 0.1 / 4.0;
+            const VERTICAL_SCROLL_SENSITIVITY: f64 = 0.1;
+
+            let diff = scroll_delta.x as f64 * HORIZONTAL_SCROLL_SENSITIVITY
+                + scroll_delta.y as f64
+                    * if shift_pressed {
+                        VERTICAL_SCROLL_SENSITIVITY
+                    } else {
+                        0.0
+                    };
+
+            self.display_start =
+                (self.display_start + crate::audio::TimePoint::new(0, -diff)).clamped_to_zero();
         }
 
         egui::Panel::top("top_panel").show(ctx, |ui| {
@@ -326,38 +340,44 @@ impl eframe::App for JonnahSlicer<'_> {
 
             let display_length = (8.0 * self.zoom_level) as i64;
 
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                let end_time_point =
-                    self.display_start + crate::audio::TimePoint::new(display_length, 0.0);
+            egui::ScrollArea::vertical()
+                .scroll_source(if shift_pressed {
+                    egui::scroll_area::ScrollSource::NONE
+                } else {
+                    egui::scroll_area::ScrollSource::MOUSE_WHEEL
+                })
+                .show(ui, |ui| {
+                    let end_time_point =
+                        self.display_start + crate::audio::TimePoint::new(display_length, 0.0);
 
-                // Draw measures labels
-                {
-                    let (rect, _response) = ui.allocate_exact_size(
-                        egui::Vec2::new(ui.available_width(), 20.0),
-                        egui::Sense::click(),
-                    );
-
-                    let start = f64::from(self.display_start);
-                    let end = (self.display_start.measure + display_length) as f64;
-
-                    let mut i = self.display_start.ceil() as f64;
-                    while i < end {
-                        let tx = (i - start) / (end - start);
-                        let pos = egui::pos2(rect.min.x + tx as f32 * rect.width(), rect.min.y);
-
-                        ui.put(
-                            egui::Rect::from_pos(pos).expand(20.0),
-                            egui::Label::new(i.to_string()),
+                    // Draw measures labels
+                    {
+                        let (rect, _response) = ui.allocate_exact_size(
+                            egui::Vec2::new(ui.available_width(), 20.0),
+                            egui::Sense::click(),
                         );
 
-                        i += 1.0;
+                        let start = f64::from(self.display_start);
+                        let end = (self.display_start.measure + display_length) as f64;
+
+                        let mut i = self.display_start.ceil() as f64;
+                        while i < end {
+                            let tx = (i - start) / (end - start);
+                            let pos = egui::pos2(rect.min.x + tx as f32 * rect.width(), rect.min.y);
+
+                            ui.put(
+                                egui::Rect::from_pos(pos).expand(20.0),
+                                egui::Label::new(i.to_string()),
+                            );
+
+                            i += 1.0;
+                        }
                     }
-                }
 
-                for stem in &mut self.project.stems {
-                    let full_stem_dims = [ui.available_width(), STEM_HEIGHT];
+                    for stem in &mut self.project.stems {
+                        let full_stem_dims = [ui.available_width(), STEM_HEIGHT];
 
-                    ui.allocate_ui_with_layout(
+                        ui.allocate_ui_with_layout(
                         full_stem_dims.into(),
                         egui::Layout::left_to_right(egui::Align::Max),
                         |ui| {
@@ -553,8 +573,8 @@ impl eframe::App for JonnahSlicer<'_> {
                             }
                         },
                     );
-                }
-            });
+                    }
+                });
 
             let rect = ui.available_rect_before_wrap();
 
