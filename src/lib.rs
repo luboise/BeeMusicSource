@@ -4,7 +4,7 @@ mod audio_player;
 mod project;
 
 pub use app::JonnahSlicer;
-use midi_reader_writer::midly_0_5::exports::{MetaMessage, MidiMessage, Timing, TrackEventKind};
+use midi_reader_writer::midly_0_5::exports::{MidiMessage, TrackEventKind};
 
 pub(crate) fn slices_from_midi(
     bytes: &[u8],

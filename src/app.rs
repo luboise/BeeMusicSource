@@ -4,6 +4,31 @@ use crate::audio::calculate_num_samples;
 
 pub const STEM_HEIGHT: f32 = 200.0;
 
+#[derive(Default)]
+struct InputState {
+    pub mouse_pos: Option<egui::Pos2>,
+    pub lmb_down: bool,
+    pub rmb_down: bool,
+    pub scroll_delta: egui::Vec2,
+    pub shift_pressed: bool,
+    pub home_pressed: bool,
+    pub g_pressed: bool,
+}
+
+impl InputState {
+    pub fn from_ctx(ctx: &egui::Context) -> Self {
+        ctx.input(|i| Self {
+            mouse_pos: i.pointer.latest_pos(),
+            lmb_down: i.pointer.button_down(egui::PointerButton::Primary),
+            rmb_down: i.pointer.button_down(egui::PointerButton::Secondary),
+            scroll_delta: i.smooth_scroll_delta(),
+            shift_pressed: i.modifiers.shift,
+            home_pressed: i.key_pressed(egui::Key::Home),
+            g_pressed: i.key_pressed(egui::Key::G),
+        })
+    }
+}
+
 #[derive(Default, Debug)]
 enum ProjectStatus {
     #[default]
@@ -29,6 +54,13 @@ pub struct JonnahSlicer<'a> {
 
     zoom_level: f32,
     audio_volume: f32,
+
+    // slices gathered from dropped midi files
+    #[serde(skip)]
+    midi_file_slices: Vec<crate::project::Slice>,
+
+    #[serde(skip)]
+    input_state: InputState,
 
     #[serde(skip)]
     project_status: ProjectStatus,
@@ -114,6 +146,7 @@ impl Default for JonnahSlicer<'_> {
             project: LiveProject::default(),
             visual_density: 6000,
             audio_volume: 1.0,
+            input_state: InputState::default(),
             zoom_level: 1.0,
             jonnah_image: None,
             display_start: crate::audio::TimePoint::default(),
@@ -136,6 +169,7 @@ impl Default for JonnahSlicer<'_> {
             project_path: None,
             drag_and_drop: egui::DragAndDrop::default(),
             project_status: Default::default(),
+            midi_file_slices: Default::default(),
         }
     }
 }
@@ -178,6 +212,8 @@ impl JonnahSlicer<'_> {
                 .unwrap_or_else(|| std::path::PathBuf::from("./project.jonnah")),
         )
     }
+
+    pub fn draw_everything(&mut self, ui: &mut egui::Ui) {}
 }
 
 impl eframe::App for JonnahSlicer<'_> {
@@ -188,6 +224,7 @@ impl eframe::App for JonnahSlicer<'_> {
 
     /// Called each time the UI needs repainting, which may be many times per second.
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.input_state = InputState::from_ctx(ctx);
         if let Some(project_path) = &self.project_path {
             match &self.project_status {
                 ProjectStatus::None => {
@@ -239,8 +276,6 @@ impl eframe::App for JonnahSlicer<'_> {
             });
         }
 
-        let mut midis = vec![];
-
         for dropped_file in dropped {
             if let Some(path) = dropped_file.path {
                 let parent_dir = std::env::current_dir();
@@ -290,7 +325,7 @@ impl eframe::App for JonnahSlicer<'_> {
                         continue;
                     };
 
-                    midis.extend(midi);
+                    self.midi_file_slices.extend(midi);
                 }
             }
         }
@@ -308,25 +343,19 @@ impl eframe::App for JonnahSlicer<'_> {
             }
         });
 
-        let (scroll_delta, shift_pressed, home_pressed) = ctx.input(|i| {
-            (
-                i.smooth_scroll_delta(),
-                i.modifiers.shift,
-                i.key_pressed(egui::Key::Home),
-            )
-        });
-
-        if home_pressed {
+        if self.input_state.home_pressed {
             self.display_start = Default::default();
         }
 
-        if scroll_delta.x != 0.0 || (shift_pressed && scroll_delta.y != 0.0) {
+        if self.input_state.scroll_delta.x != 0.0
+            || (self.input_state.shift_pressed && self.input_state.scroll_delta.y != 0.0)
+        {
             const HORIZONTAL_SCROLL_SENSITIVITY: f64 = 0.1 / 4.0;
             const VERTICAL_SCROLL_SENSITIVITY: f64 = 0.1;
 
-            let diff = scroll_delta.x as f64 * HORIZONTAL_SCROLL_SENSITIVITY
-                + scroll_delta.y as f64
-                    * if shift_pressed {
+            let diff = self.input_state.scroll_delta.x as f64 * HORIZONTAL_SCROLL_SENSITIVITY
+                + self.input_state.scroll_delta.y as f64
+                    * if self.input_state.shift_pressed {
                         VERTICAL_SCROLL_SENSITIVITY
                     } else {
                         0.0
@@ -373,6 +402,12 @@ impl eframe::App for JonnahSlicer<'_> {
         });
 
         egui::CentralPanel::default().show(ctx, |ui| {
+            self.draw_everything(ui);
+        });
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        egui::CentralPanel::default().show_inside(ui, |ui| {
             if let Some(jonnah) = &self.jonnah_image {
                 jonnah.paint_at(ui, ui.content_rect());
             }
@@ -437,7 +472,7 @@ impl eframe::App for JonnahSlicer<'_> {
             let display_length = (8.0 * self.zoom_level) as i64;
 
             egui::ScrollArea::vertical()
-                .scroll_source(if shift_pressed {
+                .scroll_source(if self.input_state.shift_pressed {
                     egui::scroll_area::ScrollSource::NONE
                 } else {
                     egui::scroll_area::ScrollSource::MOUSE_WHEEL
@@ -547,10 +582,10 @@ impl eframe::App for JonnahSlicer<'_> {
                             );
 
                             let (_rect, event) = draw_stem(
+                                ui,
                                 stem,
                                 &self.project.bpm_changes,
-                                ctx,
-                                ui,
+                                &self.input_state,
                                 self.display_start,
                                 end_time_point,
                             )
@@ -558,7 +593,7 @@ impl eframe::App for JonnahSlicer<'_> {
 
                             match event {
                                 Some(StemEvent::Hovering) => {
-                                    for slice in std::mem::take(&mut midis) {
+                                    for slice in std::mem::take(&mut self.midi_file_slices) {
                                         // TODO: Make this faster?
                                         stem.stem.slices.push(slice);
                                     }
@@ -612,7 +647,7 @@ impl eframe::App for JonnahSlicer<'_> {
                                             .map(|channel| {
                                                 channel
                                                     .get(start_sample_index..end_sample_index)
-                                                    .map(|v|v.to_vec())
+                                                    .map(|v| v.to_vec())
                                                     .ok_or("bad channel")
                                             })
                                             .collect::<Result<Vec<_>, _>>()
@@ -626,10 +661,9 @@ impl eframe::App for JonnahSlicer<'_> {
                                             if let Some(audio_player) = &self.audio_player {
                                                 audio_player.add_audio(playback);
                                             }
+                                        } else {
+                                            eprintln!("bad channel");
                                         }
-                                            else {
-                                                eprintln!("bad channel");
-                                            }
                                     }
                                 }
                                 Some(StemEvent::LeftClick(sample_clicked)) => {
@@ -694,8 +728,6 @@ impl eframe::App for JonnahSlicer<'_> {
             });
         });
     }
-
-    fn ui(&mut self, _ui: &mut egui::Ui, _frame: &mut eframe::Frame) {}
 }
 
 fn powered_by_egui_and_eframe(ui: &mut egui::Ui) {
@@ -720,21 +752,13 @@ enum StemEvent {
 }
 
 fn draw_stem(
+    ui: &mut egui::Ui,
     live_stem: &LiveStem,
     bpm_changes: &[crate::audio::BPMChange],
-    ctx: &egui::Context,
-    ui: &mut egui::Ui,
+    input_state: &InputState,
     start_time: crate::audio::TimePoint,
     end_time: crate::audio::TimePoint,
 ) -> Result<(egui::Rect, Option<StemEvent>), Box<dyn std::error::Error>> {
-    let (mouse_pos, lmb_down, rmb_down) = ctx.input(|i| {
-        (
-            i.pointer.latest_pos(),
-            i.pointer.button_down(egui::PointerButton::Primary),
-            i.pointer.button_down(egui::PointerButton::Secondary),
-        )
-    });
-
     let (rect, response) = ui.allocate_exact_size(
         egui::Vec2::new(ui.available_width(), STEM_HEIGHT),
         egui::Sense::click(),
@@ -770,13 +794,13 @@ fn draw_stem(
     painter.rect_filled(rect, 0.0, egui::Color32::from_gray(35));
 
     const SLICE_COLOUR: egui::Color32 = egui::Color32::WHITE;
-    let stroke = egui::Stroke::new(3.0, SLICE_COLOUR);
+    let stroke = egui::Stroke::new(3.0f32, SLICE_COLOUR);
 
     let mouse_x_ratio = {
         let x1 = rect.min.x;
         let x2 = rect.max.x;
 
-        ((mouse_pos.unwrap_or_default().x - x1) / (x2 - x1)).clamp(0.0, 1.0)
+        ((input_state.mouse_pos.unwrap_or_default().x - x1) / (x2 - x1)).clamp(0.0, 1.0)
     };
 
     if let Some(audio) = &live_stem.audio {
@@ -787,7 +811,7 @@ fn draw_stem(
         let visual_density = 6000;
 
         let waveform_stroke =
-            egui::Stroke::new(1.5, egui::Color32::from_gray(190).linear_multiply(0.7));
+            egui::Stroke::new(1.5f32, egui::Color32::from_gray(190).linear_multiply(0.7));
 
         audio.draw_channel(
             0,
@@ -806,7 +830,7 @@ fn draw_stem(
             .then_some(slice.clone())
     });
 
-    let measure_stroke = egui::Stroke::new(2.0, egui::Color32::DARK_BLUE.linear_multiply(0.7));
+    let measure_stroke = egui::Stroke::new(2.0f32, egui::Color32::DARK_BLUE.linear_multiply(0.7));
     for i in start_time.measure..end_time.measure {
         let measure_sample_index = calculate_num_samples(
             Default::default(),
@@ -841,7 +865,7 @@ fn draw_stem(
         painter.line_segment(points, measure_stroke);
     }
 
-    let bpm_change_stroke = egui::Stroke::new(6.0, egui::Color32::RED.linear_multiply(0.7));
+    let bpm_change_stroke = egui::Stroke::new(6.0f32, egui::Color32::RED.linear_multiply(0.7));
     for bpm_change in bpm_changes {
         let sample = calculate_num_samples(
             Default::default(),
@@ -915,7 +939,7 @@ fn draw_stem(
 
     let mut event = None;
 
-    if let Some(mouse_pos) = &mouse_pos
+    if let Some(mouse_pos) = &input_state.mouse_pos
         && rect.contains(*mouse_pos)
     {
         // default to hovering if no other event is met
@@ -924,7 +948,7 @@ fn draw_stem(
         let sample_clicked =
             (start_sample as f64 + mouse_x_ratio as f64 * visual_samples as f64).round() as usize;
 
-        if response.middle_clicked() || ui.input(|input| input.key_pressed(egui::Key::G)) {
+        if response.middle_clicked() || input_state.g_pressed {
             let sample_clicked = (start_sample as f64
                 + mouse_x_ratio as f64 * visual_samples as f64)
                 .round() as usize;
@@ -932,9 +956,9 @@ fn draw_stem(
             event = Some(StemEvent::PlayAudio(sample_clicked));
         }
 
-        if lmb_down {
+        if input_state.lmb_down {
             event = Some(StemEvent::LeftClick(sample_clicked));
-        } else if rmb_down {
+        } else if input_state.rmb_down {
             event = Some(StemEvent::RightClick(sample_clicked));
         }
     }
